@@ -3,7 +3,9 @@ import logging
 import os
 import random
 import json
+import deepspeed
 
+from transformers.deepspeed import HfDeepSpeedConfig
 from typing import Dict, Tuple
 from argparse import Namespace
 
@@ -93,7 +95,8 @@ def set_seed(args):
 
 
 def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: PreTrainedTokenizer,
-          run_batch_fn_train, run_batch_fn_eval) -> Tuple[int, float]:
+          run_batch_fn_train, run_batch_fn_eval,
+          optimizer=None, scheduler=None) -> Tuple[int, float]:
     """ Model training and evaluation """
     log_dir = os.path.join("runs", args.exp_name) if args.exp_name else None
     tb_writer = SummaryWriter(log_dir)
@@ -110,14 +113,17 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
         collate_fn=train_dataset.collate_fn
     )
 
+    if args.deepspeed_config is None:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, eps=args.adam_epsilon)
+
     t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, eps=args.adam_epsilon)
     if 0 < args.warmup_steps < 1:
         args.warmup_steps = int(args.warmup_steps * t_total)
 
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total
-    )
+    if args.deepspeed_config is None:
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total
+        )
 
     # Train!
     global_step = 0
@@ -361,13 +367,14 @@ def main():
                         help="Optional description to be listed in eval_results.txt")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device (cuda or cpu)")
+    parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
 
     # Setup logging
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d : %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO,
+        level=logging.INFO
     )
 
     verify_args(args, parser)
@@ -389,10 +396,6 @@ def main():
     dataset_args.eval_only = args.eval_only
     dataset_args.debug = args.debug
 
-    # Setup CUDA & GPU
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    args.device = device
-
     # Set seed
     set_seed(args)
 
@@ -404,32 +407,40 @@ def main():
         model_load_kwargs["load_in_8bit"] = True
     
     if args.use_peft:
-        from peft import PeftConfig, LoraConfig, prepare_model_for_int8_training, get_peft_model, TaskType
+        from peft import LoraConfig, prepare_model_for_int8_training, get_peft_model, TaskType, PeftModel
         if args.task == "generation":
             if dataset_args.gen_task == "causal_lm":
                 lora_task_type = TaskType.CAUSAL_LM
+                target_modules = ["q_proj", "v_proj"] 
             else:
                 lora_task_type = TaskType.SEQ_2_SEQ_LM
+                target_modules = ["q", "v"]
             peft_config = LoraConfig(
                 task_type=lora_task_type, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1,
-                target_modules=["q_proj", "v_proj"]
+                target_modules=target_modules
             )
         else:
             raise NotImplementedError("PEFT is only supported for generation task.")
+        
+    if args.deepspeed_config:
+        local_rank = int(os.getenv("LOCAL_RANK", "0"))
+        torch.cuda.set_device(local_rank)
+        deepspeed.init_distributed(dist_backend="nccl")
+        dschf = HfDeepSpeedConfig(args.deepspeed_config)
 
     if args.eval_only:
         args.output_dir = args.checkpoint
         if args.use_peft:
             model = model_class.from_pretrained(args.model_name_or_path, **model_load_kwargs)
-            peft_config = PeftConfig.from_pretrained(args.checkpoint)
             if args.load_in_8bit:
                 model = prepare_model_for_int8_training(model, peft_config)
-            model = get_peft_model(model, peft_config)
+            model = PeftModel.from_pretrained(model, model_id=args.checkpoint)
         else:
             model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
 
         tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
-        model.to(args.device)
+        if torch.cuda.device_count() <= 1:
+            model.to(args.device)
         logger.info("Training/evaluation parameters %s", args)
         # Evaluation
         eval_dataset = dataset_class(dataset_args, tokenizer, split_type=args.eval_dataset,
@@ -441,12 +452,12 @@ def main():
         if args.checkpoint is not None:
             if args.use_peft:
                 model = model_class.from_pretrained(args.model_name_or_path, **model_load_kwargs)
-                peft_config = PeftConfig.from_pretrained(args.checkpoint)
-                model = get_peft_model(model, peft_config)
+                model = PeftModel.from_pretrained(model, model_id=args.checkpoint)
             else:
                 model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
             tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
-            model.to(args.device)
+            if torch.cuda.device_count() <= 1:
+                model.to(args.device)
         else:
             config = AutoConfig.from_pretrained(args.model_name_or_path)
             tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
@@ -456,15 +467,20 @@ def main():
             if args.use_peft:
                 model = get_peft_model(model, peft_config)
             model.resize_token_embeddings(len(tokenizer))
-            model.to(args.device)
+            if torch.cuda.device_count() <= 1:
+                model.to(args.device)
         logger.info("Training/evaluation parameters %s", args)
+
+        optimizer, scheduler = None, None
+        if args.deepspeed_config:
+            model, optimizer, _, scheduler = deepspeed.initialize(model=model, config=args.deepspeed_config)
 
         # load datasets and train the model
         train_dataset = dataset_class(dataset_args, tokenizer, split_type="train")
         eval_dataset = dataset_class(dataset_args, tokenizer,
                                      split_type="val")  # main difference is during evaluation, val need to go through all snippets
         global_step, tr_loss = train(args, train_dataset, eval_dataset, model, tokenizer, run_batch_fn_train,
-                                     run_batch_fn_eval)
+                                     run_batch_fn_eval, optimizer=optimizer, scheduler=scheduler)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
 

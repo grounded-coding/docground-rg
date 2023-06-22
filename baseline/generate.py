@@ -8,6 +8,7 @@ from typing import Dict
 from argparse import Namespace
 
 import numpy as np
+import deepspeed
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
 from tqdm import tqdm
@@ -147,6 +148,7 @@ def main():
                         help="Optional description to be listed in eval_results.txt")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device (cuda or cpu)")
+    parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
 
     # Setup logging
@@ -175,15 +177,11 @@ def main():
     dataset_args.generate = args.generate
     dataset_args.debug = args.debug
 
-    # Setup CUDA & GPU
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    args.device = device
-
     # Set seed
     set_seed(args)
 
     args.output_dir = args.checkpoint
-    gen_task = args.gen_task
+    gen_task = dataset_args.gen_task
     tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
     if gen_task.lower() == "seq2seq_lm":
         model_class = AutoModelForSeq2SeqLM
@@ -197,20 +195,21 @@ def main():
         model_load_kwargs["device_map"] = "auto"
         model_load_kwargs["load_in_8bit"] = True
     if args.use_peft:
-            from peft import PeftConfig, get_peft_model
+            from peft import get_peft_model, LoraConfig, PeftModel
             model = model_class.from_pretrained(args.model_name_or_path, **model_load_kwargs)
-            peft_config = PeftConfig.from_pretrained(args.checkpoint)
-            model = get_peft_model(model, peft_config)
+            model = PeftModel.from_pretrained(model, model_id=args.checkpoint)
     else:
         model = model_class.from_pretrained(args.checkpoint, ignore_mismatched_sizes=True)
-    model.to(args.device)
-
+    if args.device == "cuda" and torch.cuda.device_count() == 1:
+        model.cuda()
     logger.info("Generation parameters %s", args)
 
     # Evaluation
     eval_dataset = ResponseGenerationEvalDataset(dataset_args, tokenizer, split_type=args.eval_dataset,
                                                  labels_file=args.labels_file)
 
+    if args.deepspeed_config:
+        model, _, _, _ = deepspeed.initialize(args=args, model=model)
     result = evaluate(args, eval_dataset, model, tokenizer, desc=args.eval_desc or "val")
 
     return result
