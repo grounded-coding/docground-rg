@@ -65,8 +65,9 @@ def get_cls_report(y_true, y_pred):
 
 def get_classes(args):
     """ Get classes for dataset, model, training func, and eval func """
-    task, gen_task, model = args.task, args.gen_task, args.model_name_or_path
+    task, model = args.task, args.model_name_or_path
     if task.lower() == "generation":
+        gen_task = args.dataset_args["gen_task"]
         if gen_task.lower() == "seq2seq_lm":
             return ResponseGenerationDataset, AutoModelForSeq2SeqLM, run_batch_generation_train, run_batch_generation_eval
         elif gen_task.lower() == "causal_lm":
@@ -321,8 +322,8 @@ def main():
 
     # Required parameters
     parser.add_argument("--params_file", type=str, help="JSON configuration file")
-    parser.add_argument("--model_name_or_path", type=str, help="model_name_or_path", default='gpt2')
-    parser.add_argument("--gen_task", type=str, choices=("causal_lm", "seq2seq_lm"), default="seq2seq_lm",
+    parser.add_argument("--model_name_or_path", type=str, help="model_name_or_path")
+    parser.add_argument("--gen_task", type=str, choices=("causal_lm", "seq2seq_lm"),
                         help="Specify the way data is processed for generation task.")
     parser.add_argument("--eval_only", action="store_true",
                         help="Perform evaluation only")
@@ -396,9 +397,36 @@ def main():
 
     dataset_class, model_class, run_batch_fn_train, run_batch_fn_eval = get_classes(args)
 
+    model_load_kwargs = {}
+    if args.load_in_8bit:
+        model_load_kwargs["device_map"] = "auto"
+        model_load_kwargs["load_in_8bit"] = True
+    
+    if args.use_peft:
+        from peft import PeftConfig, LoraConfig, prepare_model_for_int8_training, get_peft_model, TaskType
+        if args.task == "generation":
+            if dataset_args.gen_task == "causal_lm":
+                lora_task_type = TaskType.CAUSAL_LM
+            else:
+                lora_task_type = TaskType.SEQ_2_SEQ_LM
+            peft_config = LoraConfig(
+                task_type=lora_task_type, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1,
+                target_modules=["q_proj", "v_proj"]
+            )
+        else:
+            raise NotImplementedError("PEFT is only supported for generation task.")
+
     if args.eval_only:
         args.output_dir = args.checkpoint
-        model = model_class.from_pretrained(args.checkpoint)
+        if args.use_peft:
+            model = model_class.from_pretrained(args.model_name_or_path, **model_load_kwargs)
+            peft_config = PeftConfig.from_pretrained(args.checkpoint)
+            if args.load_in_8bit:
+                model = prepare_model_for_int8_training(model, peft_config)
+            model = get_peft_model(model, peft_config)
+        else:
+            model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
+
         tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
         model.to(args.device)
         logger.info("Training/evaluation parameters %s", args)
@@ -410,7 +438,12 @@ def main():
 
     else:
         if args.checkpoint is not None:
-            model = model_class.from_pretrained(args.checkpoint)
+            if args.use_peft:
+                model = model_class.from_pretrained(args.model_name_or_path, **model_load_kwargs)
+                peft_config = PeftConfig.from_pretrained(args.checkpoint)
+                model = get_peft_model(model, peft_config)
+            else:
+                model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
             tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
             model.to(args.device)
         else:
@@ -418,7 +451,8 @@ def main():
             tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
             tokenizer.add_special_tokens(SPECIAL_TOKENS)
             tokenizer.model_max_length = min(1024, tokenizer.model_max_length)
-            model = model_class.from_pretrained(args.model_name_or_path, config=config)
+            model = model_class.from_pretrained(args.model_name_or_path, config=config, **model_load_kwargs)
+            model = get_peft_model(model, peft_config)
             model.resize_token_embeddings(len(tokenizer))
             model.to(args.device)
         logger.info("Training/evaluation parameters %s", args)

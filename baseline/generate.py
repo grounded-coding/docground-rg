@@ -191,7 +191,18 @@ def main():
         model_class = AutoModelForCausalLM
     else:
         raise ValueError(f"Unknown task {gen_task}")
-    model = model_class.from_pretrained(args.checkpoint, ignore_mismatched_sizes=True)
+        
+    model_load_kwargs = {}
+    if args.load_in_8bit:
+        model_load_kwargs["device_map"] = "auto"
+        model_load_kwargs["load_in_8bit"] = True
+    if args.use_peft:
+            from peft import PeftConfig, get_peft_model
+            model = model_class.from_pretrained(args.model_name_or_path, **model_load_kwargs)
+            peft_config = PeftConfig.from_pretrained(args.checkpoint)
+            model = get_peft_model(model, peft_config)
+    else:
+        model = model_class.from_pretrained(args.checkpoint, ignore_mismatched_sizes=True)
     model.to(args.device)
 
     logger.info("Generation parameters %s", args)
