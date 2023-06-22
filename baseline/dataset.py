@@ -1,4 +1,4 @@
-import os
+import copy
 import random
 import logging
 from collections import defaultdict
@@ -399,19 +399,38 @@ class ResponseGenerationDataset(BaseDataset):
             for i, s in enumerate(sequence[1:])
         ]  # speaker 2 (user)
         history = list(chain(*sequence_with_speaker[:-1]))[:max_history_len]
-        sequence = [[self.bos]] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [[self.eos]]
-        instance["input_ids"] = list(chain(*sequence))
-        instance["lm_labels"] = [self.bos] + sequence_with_speaker[-1] + [self.eos]
+
+        # If we have a T5 tokenizer, we need to add EOS token to the end of the sequence
+        if self.args.gen_task.lower() == "seq2seq_lm":
+            if 't5' in str(type(self.tokenizer)):
+                sequence = [sequence[0]] + [[self.knowledge_tag]] + [history] + [[self.eos]]
+                instance["input_ids"] = list(chain(*sequence))
+                instance["lm_labels"] = sequence_with_speaker[-1] + [self.eos]
+                    # else we assume BART architecture with both BOS and EOS
+            else:
+                sequence = [[self.bos]] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [[self.eos]]
+                instance["input_ids"] = list(chain(*sequence))
+                instance["lm_labels"] = [self.bos] + sequence_with_speaker[-1] + [self.eos]
+        # The tokenizer takes care of everything
+        # However, we have to copy the input_ids to lm_labels
+        elif self.args.gen_task.lower() == "causal_lm":
+            sequence = [sequence[0]] + [[self.knowledge_tag]] + [history] + [sequence_with_speaker[-1]]
+            source_seq = [sequence[0]] + [[self.knowledge_tag]] + [history]
+            source_len = len(list(chain(*source_seq)))
+            instance["input_ids"] = list(chain(*sequence))
+            labels = copy.deepcopy(instance["input_ids"])
+            labels[:source_len] = [-100] * source_len
+            instance["lm_labels"] = labels
+        else:
+            raise ValueError(f"Unknown generation task: {self.args.gen_task}")
         return instance, sequence
 
     def collate_fn(self, batch):
         input_ids = [ins["input_ids"] for ins in batch]
         lm_labels = [ins["lm_labels"] for ins in batch]
-
         input_ids = torch.tensor(pad_ids(input_ids, self.pad))
         attention_mask = 1 - (input_ids == self.pad).int()
         lm_labels = torch.tensor(pad_ids(lm_labels, -100))
-
         return input_ids, attention_mask, lm_labels
 
 

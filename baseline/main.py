@@ -19,7 +19,8 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizer,
     get_linear_schedule_with_warmup,
-    BartForConditionalGeneration,
+    AutoModelForSeq2SeqLM,
+    AutoModelForCausalLM,
     AutoModelForSequenceClassification,
 )
 
@@ -64,9 +65,14 @@ def get_cls_report(y_true, y_pred):
 
 def get_classes(args):
     """ Get classes for dataset, model, training func, and eval func """
-    task, model = args.task, args.model_name_or_path
+    task, gen_task, model = args.task, args.gen_task, args.model_name_or_path
     if task.lower() == "generation":
-        return ResponseGenerationDataset, BartForConditionalGeneration, run_batch_generation_train, run_batch_generation_eval
+        if gen_task.lower() == "seq2seq_lm":
+            return ResponseGenerationDataset, AutoModelForSeq2SeqLM, run_batch_generation_train, run_batch_generation_eval
+        elif gen_task.lower() == "causal_lm":
+            return ResponseGenerationDataset, AutoModelForCausalLM, run_batch_generation_train, run_batch_generation_eval
+        else:
+            raise ValueError("args.gen_task not in ['seq2seq_lm', 'causal_lm'], got %s" % gen_task)
     elif task.lower() == "selection":
         return KnowledgeSelectionDataset, AutoModelForSequenceClassification, run_batch_selection_train, run_batch_selection_eval
     elif task.lower() == 'detection':
@@ -155,6 +161,8 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
         for key, value in results.items():
             tb_writer.add_scalar("eval_{}".format(key), value, global_step)
         tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
+        if local_steps == 0:
+            local_steps = 1
         tb_writer.add_scalar("loss", tr_loss / local_steps, global_step)
 
         if results['val_measure'] < val_loss:
@@ -314,6 +322,8 @@ def main():
     # Required parameters
     parser.add_argument("--params_file", type=str, help="JSON configuration file")
     parser.add_argument("--model_name_or_path", type=str, help="model_name_or_path", default='gpt2')
+    parser.add_argument("--gen_task", type=str, choices=("causal_lm", "seq2seq_lm"), default="seq2seq_lm",
+                        help="Specify the way data is processed for generation task.")
     parser.add_argument("--eval_only", action="store_true",
                         help="Perform evaluation only")
     parser.add_argument("--task", type=str, choices=('detection', 'selection', 'generation'),

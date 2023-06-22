@@ -35,6 +35,9 @@ def update_additional_params(params, args):
     if args.get("negative_sample_method", ""):
         params["dataset_args"]["negative_sample_method"] = args["negative_sample_method"]
 
+    if args.get("gen_task", ""):
+        params["dataset_args"]["gen_task"] = args["gen_task"]
+
     if args.get("eval_all_snippets", False):
         params["dataset_args"]["eval_all_snippets"] = args["eval_all_snippets"]
 

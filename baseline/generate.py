@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
 from tqdm import tqdm
-from transformers import AutoTokenizer, BartForConditionalGeneration
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM
 from .dataset import ResponseGenerationEvalDataset
 
 from .utils.argument import update_additional_params
@@ -183,8 +183,14 @@ def main():
     set_seed(args)
 
     args.output_dir = args.checkpoint
+    gen_task = args.gen_task
     tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
-    model_class = BartForConditionalGeneration
+    if gen_task.lower() == "seq2seq_lm":
+        model_class = AutoModelForSeq2SeqLM
+    elif gen_task.lower() == "causal_lm":
+        model_class = AutoModelForCausalLM
+    else:
+        raise ValueError(f"Unknown task {gen_task}")
     model = model_class.from_pretrained(args.checkpoint, ignore_mismatched_sizes=True)
     model.to(args.device)
 
