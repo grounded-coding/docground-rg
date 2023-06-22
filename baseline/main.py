@@ -54,6 +54,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 os.environ['TRANSFORMERS_OFFLINE'] = '1'
+MAX_DESIRED_LENGTH = 1024
 
 
 def get_cls_report(y_true, y_pred):
@@ -450,9 +451,10 @@ def main():
             config = AutoConfig.from_pretrained(args.model_name_or_path)
             tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
             tokenizer.add_special_tokens(SPECIAL_TOKENS)
-            tokenizer.model_max_length = min(1024, tokenizer.model_max_length)
+            tokenizer.model_max_length = min(MAX_DESIRED_LENGTH, tokenizer.model_max_length)
             model = model_class.from_pretrained(args.model_name_or_path, config=config, **model_load_kwargs)
-            model = get_peft_model(model, peft_config)
+            if args.use_peft:
+                model = get_peft_model(model, peft_config)
             model.resize_token_embeddings(len(tokenizer))
             model.to(args.device)
         logger.info("Training/evaluation parameters %s", args)

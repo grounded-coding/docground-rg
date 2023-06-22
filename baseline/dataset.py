@@ -400,6 +400,7 @@ class ResponseGenerationDataset(BaseDataset):
             [self.speaker1 if (len(sequence) - i) % 2 == 0 else self.speaker2] + s
             for i, s in enumerate(sequence[1:])
         ]  # speaker 2 (user)
+
         history = list(chain(*sequence_with_speaker[:-1]))[:max_history_len]
 
         # If we have a T5 tokenizer, we need to add EOS token to the end of the sequence
