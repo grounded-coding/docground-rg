@@ -2,6 +2,7 @@ import copy
 
 import torch
 import logging
+from transformers import PreTrainedModel
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +70,9 @@ def run_batch_selection_eval(args, model, batch, **kwargs):
     return eval_loss, all_logits, original_labels
 
 
-def run_batch_generation_train(args, model, batch, **kwargs):
+def run_batch_generation_train(args, model: PreTrainedModel, batch, **kwargs):
     """ Run batch generation during training time """
+    # TODO Must probably be adjusted for deepspeed
     batch = tuple(input_tensor.to(args.device) for input_tensor in batch[:4])
     input_ids, attention_mask, lm_labels = batch
     model_outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=lm_labels)
