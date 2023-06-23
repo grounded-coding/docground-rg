@@ -137,42 +137,34 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
     set_seed(args)  # for reproducibility
     val_loss = float('inf')
 
-    if False:
-        for _ in train_iterator:
-            local_steps = 0  # update step
-            tr_loss = 0.0
-            epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=False)
-            step = 0  # backward step
-            total_log_loss = 0
-            for _, batch in enumerate(epoch_iterator):
-                model.train()
-                for loss, _, _ in run_batch_fn_train(args, model, batch, global_step=global_step):
-                    step += 1
+    for _ in train_iterator:
+        local_steps = 0  # update step
+        tr_loss = 0.0
+        epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=False)
+        step = 0  # backward step
+        total_log_loss = 0
+        for _, batch in enumerate(epoch_iterator):
+            model.train()
+            for loss, _, _ in run_batch_fn_train(args, model, batch, global_step=global_step):
+                step += 1
 
-                    total_log_loss += loss.item()
+                total_log_loss += loss.item()
 
-                    if args.gradient_accumulation_steps > 1:
-                        loss = loss / args.gradient_accumulation_steps
+                if args.gradient_accumulation_steps > 1:
+                    loss = loss / args.gradient_accumulation_steps
 
-                    loss.backward()
-                    tr_loss += loss.item()
+                loss.backward()
+                tr_loss += loss.item()
 
-                    if (step + 1) % args.gradient_accumulation_steps == 0:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                        optimizer.step()
-                        scheduler.step()
-                        optimizer.zero_grad()
-                        global_step += 1
-                        local_steps += 1
-                        epoch_iterator.set_postfix(Loss=tr_loss / local_steps)
-                        total_log_loss = 0
-    else:
-        # Pass the namespace args as a dict to the TrainingArguments constructor
-        expected_args = inspect.signature(TrainingArguments).parameters.keys()
-        filtered_args = {k: v for k, v in vars(args).items() if k in expected_args and k not in ["debug"]}
-        training_args = TrainingArguments(**filtered_args)
-        trainer = Trainer(model, training_args, train_dataset=train_dataset, eval_dataset=eval_dataset)
-        trainer.train()
+                if (step + 1) % args.gradient_accumulation_steps == 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad()
+                    global_step += 1
+                    local_steps += 1
+                    epoch_iterator.set_postfix(Loss=tr_loss / local_steps)
+                    total_log_loss = 0
 
     results = evaluate(args, eval_dataset, model, run_batch_fn_eval, desc=str(global_step))
 
@@ -182,8 +174,7 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
     tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
     if local_steps == 0:
         local_steps = 1
-    if args.deepspeed_config is None:
-        tb_writer.add_scalar("loss", tr_loss / local_steps, global_step)
+    tb_writer.add_scalar("loss", tr_loss / local_steps, global_step)
 
     if results['val_measure'] < val_loss:
         logger.info(f"Find a smaller val loss measure {results['val_measure']}")

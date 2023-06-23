@@ -1,0 +1,69 @@
+{
+    // Verwendet IntelliSense zum Ermitteln möglicher Attribute.
+    // Zeigen Sie auf vorhandene Attribute, um die zugehörigen Beschreibungen anzuzeigen.
+    // Weitere Informationen finden Sie unter https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Aktuelle Datei",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: DSTC Debug Training",
+            "type": "python",
+            "request": "launch",
+            "program": "baseline.py",
+            "args": [
+              "--params_file",
+              "baseline/configs/generation/bart-base_params.json",
+              "--task",
+              "generation",
+              "--dataroot",
+              "data",
+              "--history_max_tokens",
+              "256",
+              "--knowledge_max_tokens",
+              "256",
+              "--knowledge_file",
+              "knowledge.json",
+              "--exp_name",
+              "rg-review-bart-base-debug",
+              "--debug",
+              "1"
+            ],
+            "cwd": "/u/nils.hilgers/setups/dstc11-track5",
+            "console": "integratedTerminal"
+          },
+          {
+            "name": "Python: DSTC Debug Generation",
+            "type": "python",
+            "request": "launch",
+            "program": "baseline.py",
+            "args": [
+              "--generate",
+              "runs/rg-review-t5-base-peft",
+              "--generation_params_file",
+              "baseline/configs/generation/generation_params.json",
+              "--task",
+              "generation",
+              "--dataroot",
+              "data",
+              "--eval_dataset",
+              "val",
+              "--labels_file",
+              "data/val/labels.json",
+              "--knowledge_file",
+              "knowledge.json",
+              "--output_file",
+              "pred/val/rg.t5-base-peft.json"
+            ],
+            "cwd": "/u/nils.hilgers/setups/dstc11-track5",
+            "console": "integratedTerminal"
+          }
+          
+    ]
+}
