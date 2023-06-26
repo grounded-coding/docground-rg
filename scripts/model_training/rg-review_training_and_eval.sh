@@ -18,21 +18,15 @@ versions_acml="4.4.0"
 export CUDA_HOME="/usr/local/cuda-${versions_cuda}"
 export LD_LIBRARY_PATH="/usr/local/cudnn-11.X-v${versions_cudnn}/lib:/usr/local/cuda-${versions_cuda}/lib64:/usr/local/cuda-${versions_cuda}/extras/CUPTI/lib64:/usr/local/acml-${versions_acml}/cblas_mp/lib:/usr/local/acml-${versions_acml}/gfortran64/lib:/usr/local/acml-${versions_acml}/gfortran64_mp/lib/"
 export HDF5_USE_FILE_LOCKING='FALSE'
-
+export PATH=$PATH:/u/nils.hilgers/py-dstc/bin
 
 # Optional second and third arguments for partition and GPUs
 partition=${2:-gpu_24gb}  # default to 'gpu_24gb' if not specified
 gpus=${3:-1}  # default to 1 if not specified
 cpu_mem=${4:-24}  # default to 24 if not specified
 
-if [ "$gpus" -gt 1 ]
-then
-  train_command="/u/nils.hilgers/py-dstc/bin/python -m torch.distributed.run --nproc_per_node=${gpus} baseline.py --params_file baseline/configs/generation/${model_alias}_params.json --task generation --dataroot data --history_max_tokens 256 --knowledge_max_tokens 256 --knowledge_file knowledge.json --exp_name rg-review-${model_alias} --deepspeed_config baseline/configs/deepspeed/ds_config.json"
-  eval_command="/u/nils.hilgers/py-dstc/bin/python -m torch.distributed.run --nproc_per_node=${gpus} baseline.py --generate runs/rg-review-${model_alias} --generation_params_file baseline/configs/generation/generation_params.json --task generation --dataroot data --eval_dataset val --labels_file data/val/labels.json --knowledge_file knowledge.json --output_file pred/val/rg.${model_alias}.json --deepspeed_config baseline/configs/deepspeed/ds_config.json"
-else
-  train_command="/u/nils.hilgers/py-dstc/bin/python baseline.py --params_file baseline/configs/generation/${model_alias}_params.json --task generation --dataroot data --history_max_tokens 256 --knowledge_max_tokens 256 --knowledge_file knowledge.json --exp_name rg-review-${model_alias}"
-  eval_command="/u/nils.hilgers/py-dstc/bin/python baseline.py --generate runs/rg-review-${model_alias} --generation_params_file baseline/configs/generation/generation_params.json --task generation --dataroot data --eval_dataset val --labels_file data/val/labels.json --knowledge_file knowledge.json --output_file pred/val/rg.${model_alias}.json"
-fi
+train_command="/u/nils.hilgers/py-dstc/bin/accelerate launch --num_processes=${gpus} baseline.py --params_file baseline/configs/generation/${model_alias}_params.json --task generation --dataroot data --history_max_tokens 256 --knowledge_max_tokens 256 --knowledge_file knowledge.json --exp_name rg-review-${model_alias} --deepspeed"
+eval_command="/u/nils.hilgers/py-dstc/bin/accelerate launch --num_processes=${gpus} baseline.py --generate runs/rg-review-${model_alias} --generation_params_file baseline/configs/generation/generation_params.json --task generation --dataroot data --eval_dataset val --labels_file data/val/labels.json --knowledge_file knowledge.json --output_file pred/val/rg.${model_alias}.json --deepspeed"
 
 mkdir -p runs/rg-review-"${model_alias}"
 mkdir -p pred/val
@@ -46,7 +40,7 @@ cat << EOF > tmp/train_job_rg-review.sh
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4
 #SBATCH --gres=gpu:${gpus}
-#SBATCH --time=24:00:00
+#SBATCH --time=96:00:00
 #SBATCH -p ${partition}
 #SBATCH --mem=${cpu_mem}G
 #SBATCH --chdir=/u/nils.hilgers/setups/dstc11-track5
@@ -64,7 +58,7 @@ cat << EOF > tmp/eval_job_rg-review.sh
 #SBATCH --gres=gpu:${gpus}
 #SBATCH --time=24:00:00
 #SBATCH -p ${partition}
-#SBATCH --mem=24G
+#SBATCH --mem=${cpu_mem}G
 #SBATCH --chdir=/u/nils.hilgers/setups/dstc11-track5
 
 ${eval_command}
