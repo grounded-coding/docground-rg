@@ -2,3 +2,5 @@
 __pycache__
 pred
 runs
+.deepspeed_env
+llama_old_train.err

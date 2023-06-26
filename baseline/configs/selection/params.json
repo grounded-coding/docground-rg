@@ -14,8 +14,8 @@
   "task": "selection",
   "model_name_or_path": "microsoft/deberta-v3-base",
 
-  "per_gpu_train_batch_size": 4,
-  "per_gpu_eval_batch_size": 1,
+  "per_device_train_batch_size": 4,
+  "per_device_eval_batch_size": 1,
   "gradient_accumulation_steps": 16,
   "max_candidates_per_forward_train": 4,
   "max_candidates_per_forward_eval": 16,

@@ -9,17 +9,17 @@
   "task": "generation",
   "model_name_or_path": "/u/nils.hilgers/models/llama-hf/7B",
 
-  "per_gpu_train_batch_size": 2,
-  "per_gpu_eval_batch_size": 2,
-  "gradient_accumulation_steps": 4,
+  "per_device_train_batch_size": 1,
+  "per_device_eval_batch_size": 1,
+  "gradient_accumulation_steps": 8,
   
   "learning_rate": 3e-5,
   "adam_epsilon": 1e-8,
   "max_grad_norm": 1.0,
   "load_in_8bit": false,
-  "use_peft": true,
+  "use_peft": false,
 
-  "num_train_epochs": 10,
+  "num_train_epochs": 3,
   "warmup_steps": 0.2,
 
   "fp16": "",
