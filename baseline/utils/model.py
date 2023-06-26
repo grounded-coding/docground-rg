@@ -70,12 +70,9 @@ def run_batch_selection_eval(args, model, batch, **kwargs):
     return eval_loss, all_logits, original_labels
 
 
-def run_batch_generation_train(args, model: PreTrainedModel, batch, **kwargs):
+def run_batch_generation_train(args, model, batch, **kwargs):
     """ Run batch generation during training time """
-    if args.deepspeed:
-        batch = tuple(input_tensor for input_tensor in batch[:4])
-    else:
-        batch = tuple(input_tensor.to(args.device) for input_tensor in batch[:4])
+    batch = tuple(input_tensor.to(args.device) for input_tensor in batch[:4])
     input_ids, attention_mask, lm_labels = batch
     model_outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=lm_labels)
     loss = model_outputs[0]
@@ -85,10 +82,7 @@ def run_batch_generation_train(args, model: PreTrainedModel, batch, **kwargs):
 
 def run_batch_generation_eval(args, model, batch, **kwargs):
     """ Run batch generation during evaluation time """
-    if args.deepspeed:
-        batch = tuple(input_tensor for input_tensor in batch[:4])
-    else:
-        batch = tuple(input_tensor.to(args.device) for input_tensor in batch[:4])
+    batch = tuple(input_tensor.to(args.device) for input_tensor in batch[:4])
     input_ids, attention_mask, lm_labels = batch
     model_outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=lm_labels)
     loss = model_outputs[0]
@@ -113,7 +107,7 @@ def run_batch_generation_sample(args, model, tokenizer, batch, dataset, accelera
 
     input_ids = torch.tensor(instance["input_ids"], device=args.device).unsqueeze(0)
     current_output = model.generate(input_ids=input_ids, num_beams=args.num_beams,
-                                    min_length=args.min_length, max_length=args.max_length,
+                                    min_new_tokens=args.min_length, max_new_tokens=args.max_length,
                                     eos_token_id=tokenizer.eos_token_id, bos_token_id=tokenizer.bos_token_id,
                                     pad_token_id=tokenizer.pad_token_id, do_sample=args.do_sample, num_return_sequences=1)
     return current_output, response_text, dialog_id

@@ -154,7 +154,7 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
                     local_steps += 1
                     epoch_iterator.set_postfix(Loss=tr_loss / local_steps)
 
-    results = evaluate(args, eval_dataset, model, run_batch_fn_eval, desc=str(global_step))
+    results = evaluate(args, eval_dataset, model, run_batch_fn_eval, desc=str(global_step), accelerator=accelerator)
 
 
     for key, value in results.items():
@@ -201,7 +201,7 @@ def save_model(args, output_dir, model, tokenizer):
     logger.info("Saving model checkpoint to %s", output_dir)
 
 
-def evaluate(args, eval_dataset, model: PreTrainedModel, run_batch_fn, desc="") -> Dict:
+def evaluate(args, eval_dataset, model: PreTrainedModel, run_batch_fn, desc="", accelerator=None) -> Dict:
     """ Model evaluation for knowledge seeking turn detection and knowledge selection
         Report evaluation results if gold labels are available
     """
@@ -218,6 +218,9 @@ def evaluate(args, eval_dataset, model: PreTrainedModel, run_batch_fn, desc="") 
         batch_size=args.eval_batch_size,
         collate_fn=eval_dataset.collate_fn
     )
+
+    if accelerator:
+        eval_dataloader = accelerator.prepare(eval_dataloader)
 
     eval_loss = 0.0
     nb_eval_steps = 0
@@ -439,13 +442,13 @@ def main():
         else:
             model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
 
-        tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
+        tokenizer = AutoTokenizer.from_pretrained(args.checkpoint, pad_token="[PAD]")
         model.to(args.device)
 
         # Evaluation
         eval_dataset = dataset_class(dataset_args, tokenizer, split_type=args.eval_dataset,
                                      labels=not args.no_labels, labels_file=args.labels_file)
-        result = evaluate(args, eval_dataset, model, run_batch_fn_eval, desc=args.eval_desc or "val")
+        result = evaluate(args, eval_dataset, model, run_batch_fn_eval, desc=args.eval_desc or "val", accelerator=accelerator)
         return result
 
     else:
@@ -461,7 +464,7 @@ def main():
             model.to(args.device)
         else:
             config = AutoConfig.from_pretrained(args.model_name_or_path)
-            tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
+            tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, pad_token="[PAD]")
             tokenizer.add_special_tokens(SPECIAL_TOKENS)
             tokenizer.model_max_length = min(MAX_DESIRED_LENGTH, tokenizer.model_max_length)
             model = model_class.from_pretrained(args.model_name_or_path, config=config, **model_load_kwargs)

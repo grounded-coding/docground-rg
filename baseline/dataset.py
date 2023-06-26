@@ -31,8 +31,6 @@ class BaseDataset(torch.utils.data.Dataset):
         self.sep = self.tokenizer.sep_token_id
         self.bos = self.tokenizer.bos_token_id
         self.eos = self.tokenizer.eos_token_id
-        if self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token_id = 0
         self.pad = self.tokenizer.pad_token_id
         self.SPECIAL_TOKENS = SPECIAL_TOKENS
 

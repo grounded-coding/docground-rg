@@ -218,9 +218,7 @@ def main():
 
             model = model_class.from_pretrained(args.model_name_or_path, **model_load_kwargs)
             model = PeftModel.from_pretrained(model, model_id=args.checkpoint)
-
-            # For inference, Zero3 Init seems to currently be not supported with PEFT, thus we merge the weights back                                                   
-            # model = model.merge_and_unload()
+            model.resize_token_embeddings(len(tokenizer))
     else:
         model = model_class.from_pretrained(args.checkpoint, ignore_mismatched_sizes=True)
     model.to(args.device)
