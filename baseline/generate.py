@@ -9,12 +9,14 @@ from argparse import Namespace
 
 import numpy as np
 import deepspeed
+from accelerate import Accelerator, init_empty_weights, load_checkpoint_and_dispatch
+
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM
 from transformers.deepspeed import HfDeepSpeedConfig
-from .dataset import ResponseGenerationEvalDataset
+from .dataset import ResponseGenerationEvalDataset, ResponseGenerationDataset
 
 from .utils.argument import update_additional_params
 from .utils.model import run_batch_generation_sample
@@ -42,7 +44,7 @@ def set_seed(args):
         torch.cuda.manual_seed_all(args.seed)
 
 
-def evaluate(args, eval_dataset, model, tokenizer, desc="") -> Dict:
+def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None) -> Dict:
     """ Generate responses and report the eval performance if references are available """
     eval_output_dir = args.output_dir
     os.makedirs(eval_output_dir, exist_ok=True)
@@ -56,6 +58,9 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="") -> Dict:
         batch_size=1,  # only support batch_size=1 for sampling right now
         collate_fn=eval_dataset.collate_fn
     )
+
+    if accelerator:
+        model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
 
     metrics = [
         DataCacheMetric(),
@@ -85,7 +90,7 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="") -> Dict:
     for batch in tqdm(eval_dataloader, desc="Evaluating", disable=False):
         with torch.no_grad():
             sampled_output_ids, ground_truth, dialog_id = run_batch_generation_func(args, model, tokenizer, batch,
-                                                                                    eval_dataset)
+                                                                                    eval_dataset, accelerator=accelerator)
             sampled_output_text = [tokenizer.decode(_sampled_output_ids, skip_special_tokens=True) for
                                    _sampled_output_ids in sampled_output_ids]
             if len(sampled_output_text) == 1:
@@ -181,11 +186,14 @@ def main():
     # Set seed
     set_seed(args)
     
-    if args.deepspeed_config:
-        local_rank = int(os.getenv("LOCAL_RANK", "0"))
-        torch.cuda.set_device(local_rank)
-        deepspeed.init_distributed(dist_backend="nccl")
-        dschf = HfDeepSpeedConfig(args.deepspeed_config)
+    model_load_kwargs = {}
+
+    accelerator = None
+    if args.deepspeed:
+        accelerator = Accelerator()
+        args.device = accelerator.device
+        # model_load_kwargs["device_map"] = "auto"
+        # not compatible with zero3 init
 
     args.output_dir = args.checkpoint
     gen_task = dataset_args.gen_task
@@ -197,30 +205,31 @@ def main():
     else:
         raise ValueError(f"Unknown task {gen_task}")
         
-    model_load_kwargs = {}
     if args.load_in_8bit:
+        # For 8-bit this is required
         model_load_kwargs["device_map"] = "auto"
         model_load_kwargs["load_in_8bit"] = True
 
+    logger.info("Generation parameters %s", args)
+    logger.info("Model inference parameters %s", model_load_kwargs)
+
     if args.use_peft:
             from peft import PeftModel
+
             model = model_class.from_pretrained(args.model_name_or_path, **model_load_kwargs)
             model = PeftModel.from_pretrained(model, model_id=args.checkpoint)
+
+            # For inference, Zero3 Init seems to currently be not supported with PEFT, thus we merge the weights back                                                   
+            # model = model.merge_and_unload()
     else:
         model = model_class.from_pretrained(args.checkpoint, ignore_mismatched_sizes=True)
-    if args.device == "cuda" and torch.cuda.device_count() <= 1:
-        model.to(args.device)
-    logger.info("Generation parameters %s", args)
+    model.to(args.device)
 
     # Evaluation
     eval_dataset = ResponseGenerationEvalDataset(dataset_args, tokenizer, split_type=args.eval_dataset,
                                                  labels_file=args.labels_file)
-    if args.deepspeed_config:
-        model, _, _, _ = deepspeed.initialize(model=model, config=args.deepspeed_config)
 
-
-
-    result = evaluate(args, eval_dataset, model, tokenizer, desc=args.eval_desc or "val")
+    result = evaluate(args, eval_dataset, model, tokenizer, desc=args.eval_desc or "val", accelerator=accelerator)
 
     return result
 

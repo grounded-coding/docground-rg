@@ -3,11 +3,11 @@ import logging
 import os
 import random
 import json
-import deepspeed
 import inspect
-
-from transformers.deepspeed import HfDeepSpeedConfig
 from typing import Dict, Tuple
+
+from accelerate import Accelerator
+import deepspeed
 from argparse import Namespace
 
 import numpy as np
@@ -25,8 +25,6 @@ from transformers import (
     AutoModelForSeq2SeqLM,
     AutoModelForCausalLM,
     AutoModelForSequenceClassification,
-    Trainer,
-    TrainingArguments,
 )
 
 from .dataset import (
@@ -98,14 +96,13 @@ def set_seed(args):
 
 
 def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: PreTrainedTokenizer,
-          run_batch_fn_train, run_batch_fn_eval,
-          optimizer=None, scheduler=None) -> Tuple[int, float]:
+          run_batch_fn_train, run_batch_fn_eval, accelerator=None) -> Tuple[int, float]:
     """ Model training and evaluation """
     log_dir = os.path.join("runs", args.exp_name) if args.exp_name else None
     tb_writer = SummaryWriter(log_dir)
     args.output_dir = log_dir
 
-    args.train_batch_size = args.per_gpu_train_batch_size
+    args.train_batch_size = args.per_device_train_batch_size
 
     train_sampler = RandomSampler(train_dataset)
     train_dataloader = DataLoader(
@@ -116,17 +113,18 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
         collate_fn=train_dataset.collate_fn
     )
 
-    if args.deepspeed_config is None:
-        optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, eps=args.adam_epsilon)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, eps=args.adam_epsilon)
 
     t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
     if 0 < args.warmup_steps < 1:
         args.warmup_steps = int(args.warmup_steps * t_total)
 
-    if args.deepspeed_config is None:
-        scheduler = get_linear_schedule_with_warmup(
+    scheduler = get_linear_schedule_with_warmup(
             optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total
         )
+    
+    if accelerator:
+        model, optimizer, train_dataloader, scheduler = accelerator.prepare(model, optimizer, train_dataloader, scheduler)
 
     # Train!
     global_step = 0
@@ -141,30 +139,20 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
         local_steps = 0  # update step
         tr_loss = 0.0
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=False)
-        step = 0  # backward step
-        total_log_loss = 0
-        for _, batch in enumerate(epoch_iterator):
-            model.train()
-            for loss, _, _ in run_batch_fn_train(args, model, batch, global_step=global_step):
-                step += 1
+        for batch in epoch_iterator:
+            with accelerator.accumulate(model):
+                model.train()
+                for loss, _, _ in run_batch_fn_train(args, model, batch, global_step=global_step):
+                    accelerator.backward(loss)
+                    tr_loss += loss.item()
 
-                total_log_loss += loss.item()
-
-                if args.gradient_accumulation_steps > 1:
-                    loss = loss / args.gradient_accumulation_steps
-
-                loss.backward()
-                tr_loss += loss.item()
-
-                if (step + 1) % args.gradient_accumulation_steps == 0:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                     optimizer.step()
-                    scheduler.step()
                     optimizer.zero_grad()
+                    scheduler.step()
                     global_step += 1
                     local_steps += 1
                     epoch_iterator.set_postfix(Loss=tr_loss / local_steps)
-                    total_log_loss = 0
 
     results = evaluate(args, eval_dataset, model, run_batch_fn_eval, desc=str(global_step))
 
@@ -180,6 +168,9 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
         logger.info(f"Find a smaller val loss measure {results['val_measure']}")
         val_loss = results['val_measure']
         # Save model checkpoint
+        if accelerator:
+            accelerator.wait_for_everyone()
+            model = accelerator.unwrap_model(model)
         save_model(args, args.output_dir, model, tokenizer)
     else:
         logger.info(f"The val loss measure {results['val_measure']} is larger than "
@@ -194,12 +185,14 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
 def save_model(args, output_dir, model, tokenizer):
     """ Save model, tokenizer, and params to the output dir """
     os.makedirs(output_dir, exist_ok=True)
+
+    logger.info("Saving model checkpoint to %s", output_dir)
+
     model_to_save = (
         model.module if hasattr(model, "module") else model
     )
-
-    logger.info("Saving model checkpoint to %s", output_dir)
     model_to_save.save_pretrained(output_dir)
+
     tokenizer.save_pretrained(output_dir)
 
     torch.save(args, os.path.join(output_dir, "training_args.bin"))
@@ -370,15 +363,21 @@ def main():
                         help="Optional description to be listed in eval_results.txt")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device (cuda or cpu)")
+
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
 
-    # Setup logging
-    logging.basicConfig(
+    if args.deepspeed:
+        accelerator = Accelerator()
+        from accelerate.logging import get_logger
+        logger = get_logger(__name__, log_level="INFO")
+    else:
+        accelerator = None
+        logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d : %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO
-    )
+        )
 
     verify_args(args, parser)
 
@@ -408,6 +407,8 @@ def main():
     if args.load_in_8bit:
         model_load_kwargs["device_map"] = "auto"
         model_load_kwargs["load_in_8bit"] = True
+
+    logger.info("Training/evaluation parameters %s", args)
     
     if args.use_peft:
         from peft import LoraConfig, prepare_model_for_int8_training, get_peft_model, TaskType, PeftModel
@@ -425,11 +426,8 @@ def main():
         else:
             raise NotImplementedError("PEFT is only supported for generation task.")
         
-    if args.deepspeed_config:
-        local_rank = int(os.getenv("LOCAL_RANK", "0"))
-        torch.cuda.set_device(local_rank)
-        deepspeed.init_distributed(dist_backend="nccl")
-        dschf = HfDeepSpeedConfig(args.deepspeed_config)
+    if accelerator:
+        args.device = accelerator.device
 
     if args.eval_only:
         args.output_dir = args.checkpoint
@@ -442,9 +440,8 @@ def main():
             model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
 
         tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
-        if torch.cuda.device_count() <= 1:
-            model.to(args.device)
-        logger.info("Training/evaluation parameters %s", args)
+        model.to(args.device)
+
         # Evaluation
         eval_dataset = dataset_class(dataset_args, tokenizer, split_type=args.eval_dataset,
                                      labels=not args.no_labels, labels_file=args.labels_file)
@@ -455,12 +452,13 @@ def main():
         if args.checkpoint is not None:
             if args.use_peft:
                 model = model_class.from_pretrained(args.model_name_or_path, **model_load_kwargs)
+                if accelerator:
+                    model.enable_input_require_grads()
                 model = PeftModel.from_pretrained(model, model_id=args.checkpoint)
             else:
                 model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
             tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
-            if torch.cuda.device_count() <= 1:
-                model.to(args.device)
+            model.to(args.device)
         else:
             config = AutoConfig.from_pretrained(args.model_name_or_path)
             tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
@@ -468,22 +466,21 @@ def main():
             tokenizer.model_max_length = min(MAX_DESIRED_LENGTH, tokenizer.model_max_length)
             model = model_class.from_pretrained(args.model_name_or_path, config=config, **model_load_kwargs)
             if args.use_peft:
+                if accelerator:
+                    model.enable_input_require_grads()
                 model = get_peft_model(model, peft_config)
             model.resize_token_embeddings(len(tokenizer))
-            if torch.cuda.device_count() <= 1:
-                model.to(args.device)
-        logger.info("Training/evaluation parameters %s", args)
+            model.to(args.device)
 
-        optimizer, scheduler = None, None
-        if args.deepspeed_config:
-            model, optimizer, _, scheduler = deepspeed.initialize(model=model, config=args.deepspeed_config)
+        if accelerator:
+            model.gradient_checkpointing_enable()
 
         # load datasets and train the model
         train_dataset = dataset_class(dataset_args, tokenizer, split_type="train")
         eval_dataset = dataset_class(dataset_args, tokenizer,
                                      split_type="val")  # main difference is during evaluation, val need to go through all snippets
         global_step, tr_loss = train(args, train_dataset, eval_dataset, model, tokenizer, run_batch_fn_train,
-                                     run_batch_fn_eval, optimizer=optimizer, scheduler=scheduler)
+                                     run_batch_fn_eval, accelerator=accelerator)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
 
