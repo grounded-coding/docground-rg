@@ -90,7 +90,7 @@ def run_batch_generation_eval(args, model, batch, **kwargs):
     return loss, lm_logits, torch.tensor([])
 
 
-def run_batch_generation_sample(args, model, tokenizer, batch, dataset, accelerator=None):
+def run_batch_generation_sample(args, model, tokenizer, batch, dataset, accelerator=None, gen_task="seq2seq_lm"):
     """ Run batch generation during test time
         Responses are decoded using beam search + sampling
     """
@@ -106,8 +106,14 @@ def run_batch_generation_sample(args, model, tokenizer, batch, dataset, accelera
     )
 
     input_ids = torch.tensor(instance["input_ids"], device=args.device).unsqueeze(0)
-    current_output = model.generate(input_ids=input_ids, num_beams=args.num_beams,
-                                    min_new_tokens=args.min_length, max_new_tokens=args.max_length,
-                                    eos_token_id=tokenizer.eos_token_id, bos_token_id=tokenizer.bos_token_id,
+    if gen_task.lower() == "causal_lm":
+        current_output = model.generate(input_ids=input_ids, num_beams=args.num_beams,
+                                        min_new_tokens=args.min_length, max_new_tokens=args.max_length,
+                                        eos_token_id=tokenizer.eos_token_id, bos_token_id=tokenizer.bos_token_id,
                                     pad_token_id=tokenizer.pad_token_id, do_sample=args.do_sample, num_return_sequences=1)
+    else:
+        current_output = model.generate(input_ids=input_ids, num_beams=args.num_beams,
+                                min_length=args.min_length, max_length=args.max_length,
+                                eos_token_id=tokenizer.eos_token_id, bos_token_id=tokenizer.bos_token_id,
+                            pad_token_id=tokenizer.pad_token_id, do_sample=args.do_sample, num_return_sequences=1)
     return current_output, response_text, dialog_id

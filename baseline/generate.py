@@ -44,7 +44,7 @@ def set_seed(args):
         torch.cuda.manual_seed_all(args.seed)
 
 
-def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None) -> Dict:
+def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, gen_task="seq2seq_lm") -> Dict:
     """ Generate responses and report the eval performance if references are available """
     eval_output_dir = args.output_dir
     os.makedirs(eval_output_dir, exist_ok=True)
@@ -90,7 +90,7 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None) ->
     for batch in tqdm(eval_dataloader, desc="Evaluating", disable=False):
         with torch.no_grad():
             sampled_output_ids, ground_truth, dialog_id = run_batch_generation_func(args, model, tokenizer, batch,
-                                                                                    eval_dataset, accelerator=accelerator)
+                                                                                    eval_dataset, accelerator=accelerator, gen_task=gen_task)
             sampled_output_text = [tokenizer.decode(_sampled_output_ids, skip_special_tokens=True) for
                                    _sampled_output_ids in sampled_output_ids]
             if len(sampled_output_text) == 1:
@@ -227,7 +227,7 @@ def main():
     eval_dataset = ResponseGenerationEvalDataset(dataset_args, tokenizer, split_type=args.eval_dataset,
                                                  labels_file=args.labels_file)
 
-    result = evaluate(args, eval_dataset, model, tokenizer, desc=args.eval_desc or "val", accelerator=accelerator)
+    result = evaluate(args, eval_dataset, model, tokenizer, desc=args.eval_desc or "val", accelerator=accelerator, gen_task=gen_task)
 
     return result
 
