@@ -10,6 +10,7 @@ import numpy as np
 import deepspeed
 import logging
 from accelerate import Accelerator, init_empty_weights, load_checkpoint_and_dispatch
+from accelerate.utils import set_seed
 
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
@@ -36,13 +37,6 @@ except ImportError:
 from accelerate.logging import get_logger
 
 logger = get_logger(__name__, log_level="INFO")
-
-def set_seed(args):
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
 
 
 def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, gen_task="seq2seq_lm") -> Dict:
@@ -184,7 +178,7 @@ def main():
     dataset_args.debug = args.debug
 
     # Set seed
-    set_seed(args)
+    set_seed(args.seed)
     
     model_load_kwargs = {}
 

@@ -7,6 +7,7 @@ import inspect
 from typing import Dict, Tuple
 
 from accelerate import Accelerator
+from accelerate.utils import set_seed
 import deepspeed
 from argparse import Namespace
 
@@ -88,14 +89,6 @@ def get_classes(args):
             "args.task not in ['generation_review', 'selection_review', 'detection_review'], got %s" % task)
 
 
-def set_seed(args):
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
-
-
 def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: PreTrainedTokenizer,
           run_batch_fn_train, run_batch_fn_eval, accelerator=None) -> Tuple[int, float]:
     """ Model training and evaluation """
@@ -132,7 +125,7 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
     train_iterator = trange(
         0, int(args.num_train_epochs), desc="Epoch", disable=False
     )
-    set_seed(args)  # for reproducibility
+    set_seed(args.seed)  # for reproducibility
     val_loss = float('inf')
 
     for _ in train_iterator:
@@ -367,13 +360,6 @@ def main():
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
 
-    accelerator = Accelerator()
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d : %(message)s",
-        datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO
-        )
-
     verify_args(args, parser)
 
     # load args from params file and update the args Namespace
@@ -393,8 +379,15 @@ def main():
     dataset_args.eval_only = args.eval_only
     dataset_args.debug = args.debug
 
+    accelerator = Accelerator(mixed_precision="fp16" if args.fp16 else "no")
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d : %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        level=logging.INFO
+        )
+
     # Set seed
-    set_seed(args)
+    set_seed(args.seed)
 
     dataset_class, model_class, run_batch_fn_train, run_batch_fn_eval = get_classes(args)
 
