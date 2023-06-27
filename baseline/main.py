@@ -101,7 +101,6 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
     train_sampler = RandomSampler(train_dataset)
     train_dataloader = DataLoader(
         train_dataset,
-        # shuffle=True,
         sampler=train_sampler,
         batch_size=args.train_batch_size,
         collate_fn=train_dataset.collate_fn
@@ -147,25 +146,28 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
                     local_steps += 1
                     epoch_iterator.set_postfix(Loss=tr_loss / local_steps)
 
-    results = evaluate(args, eval_dataset, model, run_batch_fn_eval, desc=str(global_step), accelerator=accelerator)
+        # Evaluate at the end of each epoch
+        results = evaluate(args, eval_dataset, model, run_batch_fn_eval, desc=str(global_step), accelerator=accelerator)
+        
+        for key, value in results.items():
+            tb_writer.add_scalar("eval_{}".format(key), value, global_step)
+        tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
+        if local_steps == 0:
+            local_steps = 1
+        tb_writer.add_scalar("loss", tr_loss / local_steps, global_step)
 
+        # Only save model if validation loss has improved
+        if results['val_measure'] < val_loss:
+            logger.info(f"Find a smaller val loss measure {results['val_measure']}")
+            val_loss = results['val_measure']
 
-    for key, value in results.items():
-        tb_writer.add_scalar("eval_{}".format(key), value, global_step)
-    tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
-    if local_steps == 0:
-        local_steps = 1
-    tb_writer.add_scalar("loss", tr_loss / local_steps, global_step)
+            # Save model checkpoint
+            accelerator.wait_for_everyone()
+            save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
 
-    if results['val_measure'] < val_loss:
-        logger.info(f"Find a smaller val loss measure {results['val_measure']}")
-        val_loss = results['val_measure']
-        # Save model checkpoint
-        accelerator.wait_for_everyone()
-        save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
-    else:
-        logger.info(f"The val loss measure {results['val_measure']} is larger than "
-                    f"the smallest val loss {val_loss}, continue to train ... ")
+        else:
+            logger.info(f"The val loss measure {results['val_measure']} is larger than "
+                        f"the smallest val loss {val_loss}, continue to train ... ")
 
     tb_writer.flush()
     tb_writer.close()
