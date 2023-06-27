@@ -1,6 +1,5 @@
 import copy
 import random
-import logging
 from collections import defaultdict
 from itertools import chain
 
@@ -13,7 +12,9 @@ from .utils.data import (
 from scripts.dataset_walker import DatasetWalker
 from scripts.knowledge_reader import KnowledgeReader
 
-logger = logging.getLogger(__name__)
+from accelerate.logging import get_logger
+
+logger = get_logger(__name__, log_level="INFO")
 
 SPECIAL_TOKENS = {
     "additional_special_tokens": ["<speaker1>", "<speaker2>", "<knowledge_sep>", "<knowledge_tag>"],
@@ -412,10 +413,9 @@ class ResponseGenerationDataset(BaseDataset):
                 sequence = [[self.bos]] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [[self.eos]]
                 instance["input_ids"] = list(chain(*sequence))
                 instance["lm_labels"] = [self.bos] + sequence_with_speaker[-1] + [self.eos]
-        # The tokenizer takes care of everything
-        # However, we have to copy the input_ids to lm_labels
+        # For causal LM, e have to copy the input_ids to lm_labels
         elif self.args.gen_task.lower() == "causal_lm":
-            sequence = [sequence[0]] + [[self.knowledge_tag]] + [history] + [sequence_with_speaker[-1]]
+            sequence = [sequence[0]] + [[self.knowledge_tag]] + [history] + [sequence_with_speaker[-1]] + [[self.eos]]
             source_seq = [sequence[0]] + [[self.knowledge_tag]] + [history]
             source_len = len(list(chain(*source_seq)))
             instance["input_ids"] = list(chain(*sequence))
@@ -429,6 +429,7 @@ class ResponseGenerationDataset(BaseDataset):
     def collate_fn(self, batch):
         input_ids = [ins["input_ids"] for ins in batch]
         lm_labels = [ins["lm_labels"] for ins in batch]
+
         input_ids = torch.tensor(pad_ids(input_ids, self.pad))
         attention_mask = 1 - (input_ids == self.pad).int()
         lm_labels = torch.tensor(pad_ids(lm_labels, -100))

@@ -24,8 +24,8 @@ from transformers import (
     get_linear_schedule_with_warmup,
     AutoModelForSeq2SeqLM,
     AutoModelForCausalLM,
-    AutoModelForSequenceClassification,
-)
+    AutoModelForSequenceClassification
+    )
 
 from .dataset import (
     KnowledgeTurnDetectionDataset,
@@ -49,12 +49,13 @@ from .utils.model import (
 )
 from .utils.data import write_selection_preds, write_detection_preds
 
+from accelerate.logging import get_logger
+logger = get_logger(__name__, log_level="INFO")
+
 try:
     from torch.utils.tensorboard import SummaryWriter
 except ImportError:
     from tensorboardX import SummaryWriter
-
-logger = logging.getLogger(__name__)
 
 os.environ['TRANSFORMERS_OFFLINE'] = '1'
 MAX_DESIRED_LENGTH = 1024
@@ -123,8 +124,7 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
             optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total
         )
     
-    if accelerator:
-        model, optimizer, train_dataloader, scheduler = accelerator.prepare(model, optimizer, train_dataloader, scheduler)
+    model, optimizer, train_dataloader, scheduler = accelerator.prepare(model, optimizer, train_dataloader, scheduler)
 
     # Train!
     global_step = 0
@@ -168,10 +168,8 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
         logger.info(f"Find a smaller val loss measure {results['val_measure']}")
         val_loss = results['val_measure']
         # Save model checkpoint
-        if accelerator:
-            accelerator.wait_for_everyone()
-            model = accelerator.unwrap_model(model)
-        save_model(args, args.output_dir, model, tokenizer)
+        accelerator.wait_for_everyone()
+        save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
     else:
         logger.info(f"The val loss measure {results['val_measure']} is larger than "
                     f"the smallest val loss {val_loss}, continue to train ... ")
@@ -182,23 +180,21 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
     return global_step, tr_loss / local_steps
 
 
-def save_model(args, output_dir, model, tokenizer):
+def save_model(args, output_dir, model, tokenizer, accelerator=None):
     """ Save model, tokenizer, and params to the output dir """
     os.makedirs(output_dir, exist_ok=True)
 
     logger.info("Saving model checkpoint to %s", output_dir)
+    # model = accelerator.unwrap_model(model)
 
-    model_to_save = (
-        model.module if hasattr(model, "module") else model
-    )
-    model_to_save.save_pretrained(output_dir)
-
+    model.save_pretrained(output_dir)
     tokenizer.save_pretrained(output_dir)
 
-    torch.save(args, os.path.join(output_dir, "training_args.bin"))
-    with open(os.path.join(output_dir, "params.json"), "w") as jsonfile:
-        json.dump(args.params, jsonfile, indent=2, default=lambda x: str(x))
-    logger.info("Saving model checkpoint to %s", output_dir)
+    if accelerator.is_main_process:
+        accelerator.save(args, os.path.join(output_dir, "training_args.bin"))
+        with open(os.path.join(output_dir, "params.json"), "w") as jsonfile:
+            json.dump(args.params, jsonfile, indent=2, default=lambda x: str(x))
+        logger.info("Saving model config to %s", output_dir)
 
 
 def evaluate(args, eval_dataset, model: PreTrainedModel, run_batch_fn, desc="", accelerator=None) -> Dict:
@@ -219,8 +215,7 @@ def evaluate(args, eval_dataset, model: PreTrainedModel, run_batch_fn, desc="", 
         collate_fn=eval_dataset.collate_fn
     )
 
-    if accelerator:
-        eval_dataloader = accelerator.prepare(eval_dataloader)
+    eval_dataloader = accelerator.prepare(eval_dataloader)
 
     eval_loss = 0.0
     nb_eval_steps = 0
@@ -229,6 +224,7 @@ def evaluate(args, eval_dataset, model: PreTrainedModel, run_batch_fn, desc="", 
     all_preds = []
     all_labels = []
     for batch in tqdm(eval_dataloader, desc="Evaluating", disable=False):
+        batch = accelerator.gather_for_metrics(batch)
         with torch.no_grad():
             loss, logits, labels = run_batch_fn(args, model, batch)
             if args.task in ["selection", "detection"]:
@@ -370,13 +366,8 @@ def main():
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
 
-    if args.deepspeed:
-        accelerator = Accelerator()
-        from accelerate.logging import get_logger
-        logger = get_logger(__name__, log_level="INFO")
-    else:
-        accelerator = None
-        logging.basicConfig(
+    accelerator = Accelerator()
+    logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d : %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO
@@ -429,8 +420,7 @@ def main():
         else:
             raise NotImplementedError("PEFT is only supported for generation task.")
         
-    if accelerator:
-        args.device = accelerator.device
+    args.device = accelerator.device
 
     if args.eval_only:
         args.output_dir = args.checkpoint
@@ -443,7 +433,6 @@ def main():
             model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
 
         tokenizer = AutoTokenizer.from_pretrained(args.checkpoint, pad_token="[PAD]")
-        model.to(args.device)
 
         # Evaluation
         eval_dataset = dataset_class(dataset_args, tokenizer, split_type=args.eval_dataset,
@@ -455,13 +444,11 @@ def main():
         if args.checkpoint is not None:
             if args.use_peft:
                 model = model_class.from_pretrained(args.model_name_or_path, **model_load_kwargs)
-                if accelerator:
-                    model.enable_input_require_grads()
+                model.enable_input_require_grads()
                 model = PeftModel.from_pretrained(model, model_id=args.checkpoint)
             else:
                 model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
             tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
-            model.to(args.device)
         else:
             config = AutoConfig.from_pretrained(args.model_name_or_path)
             tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, pad_token="[PAD]")
@@ -469,14 +456,11 @@ def main():
             tokenizer.model_max_length = min(MAX_DESIRED_LENGTH, tokenizer.model_max_length)
             model = model_class.from_pretrained(args.model_name_or_path, config=config, **model_load_kwargs)
             if args.use_peft:
-                if accelerator:
-                    model.enable_input_require_grads()
+                model.enable_input_require_grads()
                 model = get_peft_model(model, peft_config)
             model.resize_token_embeddings(len(tokenizer))
-            model.to(args.device)
 
-        if accelerator:
-            model.gradient_checkpointing_enable()
+        model.gradient_checkpointing_enable()
 
         # load datasets and train the model
         train_dataset = dataset_class(dataset_args, tokenizer, split_type="train")

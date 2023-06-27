@@ -1,5 +1,4 @@
 import argparse
-import logging
 import os
 import random
 import json
@@ -9,6 +8,7 @@ from argparse import Namespace
 
 import numpy as np
 import deepspeed
+import logging
 from accelerate import Accelerator, init_empty_weights, load_checkpoint_and_dispatch
 
 import torch
@@ -33,8 +33,9 @@ try:
 except ImportError:
     from tensorboardX import SummaryWriter
 
-logger = logging.getLogger(__name__)
+from accelerate.logging import get_logger
 
+logger = get_logger(__name__, log_level="INFO")
 
 def set_seed(args):
     random.seed(args.seed)
@@ -59,8 +60,7 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, ge
         collate_fn=eval_dataset.collate_fn
     )
 
-    if accelerator:
-        model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
+    model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
 
     metrics = [
         DataCacheMetric(),
@@ -188,12 +188,8 @@ def main():
     
     model_load_kwargs = {}
 
-    accelerator = None
-    if args.deepspeed:
-        accelerator = Accelerator()
-        args.device = accelerator.device
-        # model_load_kwargs["device_map"] = "auto"
-        # not compatible with zero3 init
+    accelerator = Accelerator()
+    args.device = accelerator.device
 
     args.output_dir = args.checkpoint
     gen_task = dataset_args.gen_task
@@ -215,13 +211,11 @@ def main():
 
     if args.use_peft:
             from peft import PeftModel
-
             model = model_class.from_pretrained(args.model_name_or_path, **model_load_kwargs)
             model = PeftModel.from_pretrained(model, model_id=args.checkpoint)
-            model.resize_token_embeddings(len(tokenizer))
     else:
-        model = model_class.from_pretrained(args.checkpoint, ignore_mismatched_sizes=True)
-    model.to(args.device)
+        model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
+    model.resize_token_embeddings(len(tokenizer))
 
     # Evaluation
     eval_dataset = ResponseGenerationEvalDataset(dataset_args, tokenizer, split_type=args.eval_dataset,

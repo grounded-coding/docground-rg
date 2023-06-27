@@ -1,7 +1,8 @@
-import logging
 import os
 
-logger = logging.getLogger(__name__)
+from accelerate.logging import get_logger
+
+logger = get_logger(__name__, log_level="INFO")
 
 
 def verify_args(args, parser):

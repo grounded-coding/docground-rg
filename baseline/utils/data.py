@@ -1,9 +1,9 @@
 import os
 import re
 import json
-import logging
+from accelerate.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, log_level="INFO")
 
 RE_ART = re.compile(r'\b(a|an|the)\b')
 RE_PUNC = re.compile(r'[!"#$%&()*+,-./:;<=>?@\[\]\\^`{|}~_\']')
