@@ -32,7 +32,10 @@ class BaseDataset(torch.utils.data.Dataset):
         self.sep = self.tokenizer.sep_token_id
         self.bos = self.tokenizer.bos_token_id
         self.eos = self.tokenizer.eos_token_id
-        self.pad = self.tokenizer.pad_token_id
+        if self.tokenizer.pad_token_id:
+            self.pad = self.tokenizer.pad_token_id
+        else:
+            self.pad = self.eos
         self.SPECIAL_TOKENS = SPECIAL_TOKENS
 
         self.speaker1, self.speaker2, self.knowledge_sep, self.knowledge_tag = self.tokenizer.convert_tokens_to_ids(

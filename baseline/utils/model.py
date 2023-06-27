@@ -112,7 +112,7 @@ def run_batch_generation_sample(args, model, tokenizer, batch, dataset, accelera
                                         min_new_tokens=args.min_length, max_new_tokens=args.max_length,
                                         eos_token_id=tokenizer.eos_token_id, bos_token_id=tokenizer.bos_token_id,
                                     pad_token_id=tokenizer.pad_token_id, do_sample=args.do_sample, num_return_sequences=1)
-       # current_output = [out[:len(input_ids)] for out in current_output]
+        current_output = [out[len(instance["input_ids"]):] for out in current_output]
     else:
         current_output = model.generate(input_ids=input_ids, num_beams=args.num_beams,
                                 min_length=args.min_length, max_length=args.max_length,

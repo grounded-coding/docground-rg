@@ -185,7 +185,8 @@ def save_model(args, output_dir, model, tokenizer, accelerator=None):
     os.makedirs(output_dir, exist_ok=True)
 
     logger.info("Saving model checkpoint to %s", output_dir)
-    # model = accelerator.unwrap_model(model)
+
+    model = accelerator.unwrap_model(model)
 
     model.save_pretrained(output_dir)
     tokenizer.save_pretrained(output_dir)
@@ -432,7 +433,7 @@ def main():
         else:
             model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
 
-        tokenizer = AutoTokenizer.from_pretrained(args.checkpoint, pad_token="[PAD]")
+        tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
 
         # Evaluation
         eval_dataset = dataset_class(dataset_args, tokenizer, split_type=args.eval_dataset,
@@ -451,13 +452,16 @@ def main():
             tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
         else:
             config = AutoConfig.from_pretrained(args.model_name_or_path)
-            tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, pad_token="[PAD]")
-            tokenizer.add_special_tokens(SPECIAL_TOKENS)
-            tokenizer.model_max_length = min(MAX_DESIRED_LENGTH, tokenizer.model_max_length)
+            logger.info(f"Loaded config class: {type(config)}")
             model = model_class.from_pretrained(args.model_name_or_path, config=config, **model_load_kwargs)
             if args.use_peft:
                 model.enable_input_require_grads()
                 model = get_peft_model(model, peft_config)
+            tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
+            logger.info(f"Loaded tokenizer: {type(tokenizer)}")
+
+            tokenizer.add_special_tokens(SPECIAL_TOKENS)
+            tokenizer.model_max_length = min(MAX_DESIRED_LENGTH, tokenizer.model_max_length)
             model.resize_token_embeddings(len(tokenizer))
 
         model.gradient_checkpointing_enable()

@@ -91,7 +91,7 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, ge
         with torch.no_grad():
             sampled_output_ids, ground_truth, dialog_id = run_batch_generation_func(args, model, tokenizer, batch,
                                                                                     eval_dataset, accelerator=accelerator, gen_task=gen_task)
-            sampled_output_text = [tokenizer.decode(_sampled_output_ids, skip_special_tokens=True) for
+            sampled_output_text = [tokenizer.decode(_sampled_output_ids, skip_special_tokens=True).lstrip() for
                                    _sampled_output_ids in sampled_output_ids]
             if len(sampled_output_text) == 1:
                 all_output_texts.append(sampled_output_text[0])
