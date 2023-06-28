@@ -50,7 +50,7 @@ mkdir -p runs/rg-review-"${model_alias}"
 mkdir -p pred/val
 
 # Create the sbatch scripts dynamically
-cat << EOF > tmp/train_job_rg-review.sh
+cat << EOF > tmp/train_rg-review-"${model_alias}".sh
 #!/bin/bash
 
 #SBATCH -o runs/rg-review-${model_alias}/train_job.out
@@ -66,7 +66,7 @@ cat << EOF > tmp/train_job_rg-review.sh
 ${train_command}
 EOF
 
-cat << EOF > tmp/eval_job_rg-review.sh
+cat << EOF > tmp/eval_rg-review-"${model_alias}".sh
 #!/bin/bash
 
 #SBATCH -o runs/rg-review-${model_alias}/eval_job.out
@@ -84,8 +84,8 @@ EOF
 
 # Submit the first script and get its job ID
 
-output=$(sbatch tmp/train_job_rg-review.sh | tee /dev/fd/2)
+output=$(sbatch tmp/train_rg-review-"${model_alias}".sh | tee /dev/fd/2)
 jobid=$(echo "$output" | awk '{print $4}')
 
 # Submit the second script, making it dependent on the first
-sbatch --dependency=afterok:"$jobid" tmp/eval_job_rg-review.sh
+sbatch --dependency=afterok:"$jobid" tmp/eval_rg-review-"${model_alias}".sh

@@ -46,8 +46,19 @@ class BaseDataset(torch.utils.data.Dataset):
         self.dialogs = self._prepare_conversations()
         self.knowledge_reader = KnowledgeReader(self.dataroot, args.knowledge_file)
         self.snippets = self._prepare_knowledge()
+        self.prompt, self.prompt_postfix = self._prepare_prompt()
         self._create_examples()
 
+    def _prepare_prompt(self):
+        """ Tokenize and encode the instruction-based prompt if necessary"""
+        base_prompt = "First you are given reviews and FAQs separated by <knowledge_sep>. "\
+                        "After <knowledge_tag> follows a conversation between <speaker1> and <speaker2>. "\
+                        "Complete the conversation as <speaker2> using the given information and answer concisely.\n\n"
+        tokenized_prompt = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(base_prompt))
+        base_prompt_postfix = "\n\n### Response:"
+        tokenized_prompt_postfix = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(base_prompt_postfix))
+        return tokenized_prompt, tokenized_prompt_postfix
+    
     def _prepare_conversations(self):
         """ Tokenize and encode the dialog data """
         logger.info("Tokenize and encode the dialog data")
@@ -369,21 +380,26 @@ class ResponseGenerationDataset(BaseDataset):
 
     def __getitem__(self, index):
         example = self.examples[index]
+        prompt = self.prompt if self.args.prompting == "full" else []
+        prompt_postfix = self.prompt_postfix if self.args.prompting == "full" else []
         instance, _ = self.build_input_from_segments(
             example["knowledge"],
             example["history"],
-            example["response"]
+            example["response"],
+            prompt,
+            prompt_postfix
         )
         return instance
 
-    def build_input_from_segments(self, knowledge, history, response):
+    def build_input_from_segments(self, knowledge, history, response, prompt=[], prompt_postfix=[]):
         """ Build a sequence of input from 3 segments: knowledge, history and last reply """
         instance = {}
         knowledge = [[self.knowledge_sep] + k for k in knowledge]
         knowledge = [w for k in knowledge for w in k]
 
-        # 3: special tokens; len(history): special speaker tokens
-        entire_input_len = self.tokenizer.model_max_length - 3
+        # 3: special tokens; len(history): special speaker tokens; prompt for instruction-based models
+        total_prompt_len = len(prompt) + len(prompt_postfix)
+        entire_input_len = self.tokenizer.model_max_length - total_prompt_len - 3
 
         entire_knowledge_len, entire_history_len = len(knowledge), len(list(chain(*history)))
         max_history_len = int((entire_history_len * entire_input_len) / (entire_knowledge_len + entire_history_len))
@@ -416,10 +432,10 @@ class ResponseGenerationDataset(BaseDataset):
                 sequence = [[self.bos]] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [[self.eos]]
                 instance["input_ids"] = list(chain(*sequence))
                 instance["lm_labels"] = [self.bos] + sequence_with_speaker[-1] + [self.eos]
-        # For causal LM, e have to copy the input_ids to lm_labels
+        # For causal LM, we have to copy the input_ids to lm_labels
         elif self.args.gen_task.lower() == "causal_lm":
-            sequence = [sequence[0]] + [[self.knowledge_tag]] + [history] + [sequence_with_speaker[-1]] + [[self.eos]]
-            source_seq = [sequence[0]] + [[self.knowledge_tag]] + [history]
+            sequence = [prompt] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [prompt_postfix] + [sequence_with_speaker[-1]] + [[self.eos]]
+            source_seq = [prompt] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [prompt_postfix]
             source_len = len(list(chain(*source_seq)))
             instance["input_ids"] = list(chain(*sequence))
             labels = copy.deepcopy(instance["input_ids"])
@@ -432,6 +448,8 @@ class ResponseGenerationDataset(BaseDataset):
     def collate_fn(self, batch):
         input_ids = [ins["input_ids"] for ins in batch]
         lm_labels = [ins["lm_labels"] for ins in batch]
+
+        resp_input_sample = self.tokenizer.decode(batch[0]["input_ids"])
 
         input_ids = torch.tensor(pad_ids(input_ids, self.pad))
         attention_mask = 1 - (input_ids == self.pad).int()

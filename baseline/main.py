@@ -9,7 +9,6 @@ from typing import Dict, Tuple
 
 from accelerate import Accelerator, InitProcessGroupKwargs
 from accelerate.utils import set_seed
-import deepspeed
 from argparse import Namespace
 
 import numpy as np
@@ -364,7 +363,6 @@ def main():
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device (cuda or cpu)")
 
-    parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
 
     verify_args(args, parser)

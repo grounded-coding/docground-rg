@@ -66,3 +66,4 @@ def set_default_dataset_params(args):
     set_attr_if_not_exists(args, "history_max_utterances", 100000)
     set_attr_if_not_exists(args, "history_max_tokens", 256)
     set_attr_if_not_exists(args, "knowledge_max_tokens", 256)
+    set_attr_if_not_exists(args, "prompting", "no")

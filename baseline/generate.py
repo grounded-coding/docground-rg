@@ -7,7 +7,6 @@ from typing import Dict
 from argparse import Namespace
 
 import numpy as np
-import deepspeed
 import logging
 from accelerate import Accelerator, init_empty_weights, load_checkpoint_and_dispatch
 from accelerate.utils import set_seed
@@ -148,7 +147,7 @@ def main():
                         help="Optional description to be listed in eval_results.txt")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device (cuda or cpu)")
-    parser = deepspeed.add_config_arguments(parser)
+    parser.add_argument("--prompting", type=str, default="no", help="Adds instruction prompts to the dataset for causal LM")
     args = parser.parse_args()
 
     # Setup logging
