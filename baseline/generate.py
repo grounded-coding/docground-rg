@@ -115,7 +115,7 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, ge
                 writer.write("***** Eval results %s *****\n" % desc)
                 for metric in metrics:
                     for sampled_text, ground_truth_text in zip(all_sampled_texts, all_ground_truths_text):
-                        metric.update((sampled_text, ground_truth_text))
+                        metric.update((sampled_text[0], ground_truth_text))
                     
                     name = metric.name()
                     score = metric.compute()
