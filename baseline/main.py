@@ -134,7 +134,7 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
         for batch in epoch_iterator:
             with accelerator.accumulate(model):
                 model.train()
-                for loss, _, _ in run_batch_fn_train(args, model, batch, global_step=global_step):
+                for loss, _, _ in run_batch_fn_train(args, model, batch, global_step=global_step, tokenizer=tokenizer):
                     accelerator.backward(loss)
                     tr_loss += loss.item()
 
@@ -149,29 +149,32 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
         if epoch == 0:
             # Save model checkpoint at least once if evaluation fails
             accelerator.wait_for_everyone()
-            save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
+            if accelerator.is_main_process:
+                save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
 
         # Evaluate at the end of each epoch
         results = evaluate(args, eval_dataset, model, run_batch_fn_eval, desc=str(global_step), accelerator=accelerator)
         
-        for key, value in results.items():
-            tb_writer.add_scalar("eval_{}".format(key), value, global_step)
-        tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
-        if local_steps == 0:
-            local_steps = 1
-        tb_writer.add_scalar("loss", tr_loss / local_steps, global_step)
+        if accelerator.is_main_process:
+            for key, value in results.items():
+                tb_writer.add_scalar("eval_{}".format(key), value, global_step)
+            tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
+            if local_steps == 0:
+                local_steps = 1
+            tb_writer.add_scalar("loss", tr_loss / local_steps, global_step)
 
         # Only save model if validation loss has improved
-        if results['val_measure'] < val_loss:
-            logger.info(f"Find a smaller val loss measure {results['val_measure']}")
-            val_loss = results['val_measure']
+        accelerator.wait_for_everyone()
+        if accelerator.is_main_process:
+            if results['val_measure'] < val_loss:
+                logger.info(f"Find a smaller val loss measure {results['val_measure']}")
+                val_loss = results['val_measure']
 
-            accelerator.wait_for_everyone()
-            save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
+                save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
 
-        else:
-            logger.info(f"The val loss measure {results['val_measure']} is larger than "
-                        f"the smallest val loss {val_loss}, continue to train ... ")
+            else:
+                logger.info(f"The val loss measure {results['val_measure']} is larger than "
+                            f"the smallest val loss {val_loss}, continue to train ... ")
 
     tb_writer.flush()
     tb_writer.close()
@@ -182,19 +185,14 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
 def save_model(args, output_dir, model, tokenizer, accelerator=None):
     """ Save model, tokenizer, and params to the output dir """
     os.makedirs(output_dir, exist_ok=True)
-
     logger.info("Saving model checkpoint to %s", output_dir)
-
     model = accelerator.unwrap_model(model)
-
     model.save_pretrained(output_dir)
     tokenizer.save_pretrained(output_dir)
-
-    if accelerator.is_main_process:
-        accelerator.save(args, os.path.join(output_dir, "training_args.bin"))
-        with open(os.path.join(output_dir, "params.json"), "w") as jsonfile:
-            json.dump(args.params, jsonfile, indent=2, default=lambda x: str(x))
-        logger.info("Saving model config to %s", output_dir)
+    accelerator.save(args, os.path.join(output_dir, "training_args.bin"))
+    with open(os.path.join(output_dir, "params.json"), "w") as jsonfile:
+        json.dump(args.params, jsonfile, indent=2, default=lambda x: str(x))
+    logger.info("Saving model config to %s", output_dir)
 
 
 def evaluate(args, eval_dataset, model: PreTrainedModel, run_batch_fn, desc="", accelerator=None) -> Dict:
@@ -224,17 +222,20 @@ def evaluate(args, eval_dataset, model: PreTrainedModel, run_batch_fn, desc="", 
     all_preds = []
     all_labels = []
     for batch in tqdm(eval_dataloader, desc="Evaluating", disable=False):
-        batch = accelerator.gather_for_metrics(batch)
         with torch.no_grad():
             loss, logits, labels = run_batch_fn(args, model, batch)
+
             if args.task in ["selection", "detection"]:
                 data_infos.append(batch[-1])
                 all_preds.append((logits[:, 1] - logits[:, 0]).detach().cpu().numpy())
                 all_labels.append(labels.detach().cpu().numpy())
-            eval_loss += loss.mean().item()
+            eval_loss += loss.item()
         nb_eval_steps += 1
 
-    eval_loss = eval_loss / nb_eval_steps
+    # TODO This is potentially wrong if there are duplicates in the batch introduced by Accelerate
+    all_losses = accelerator.gather(torch.tensor(eval_loss).to(accelerator.device))
+    all_steps = len(eval_dataloader.dataset)
+    eval_loss = torch.sum(all_losses) / all_steps
 
     if args.task == "generation":
         pass
@@ -252,7 +253,8 @@ def evaluate(args, eval_dataset, model: PreTrainedModel, run_batch_fn, desc="", 
         raise ValueError("args.task not in ['generation', 'selection', 'detection'], got %s" % args.task)
 
     if not args.eval_only:
-        return get_eval_performance(args, eval_output_dir, eval_loss, all_preds, all_labels, desc)
+        if accelerator.is_main_process:
+            return get_eval_performance(args, eval_output_dir, eval_loss, all_preds, all_labels, desc)
 
 
 def get_eval_performance(args, eval_output_dir, eval_loss, all_preds, all_labels, desc):
@@ -448,7 +450,8 @@ def main():
         if args.checkpoint is not None:
             if args.use_peft:
                 model = model_class.from_pretrained(args.model_name_or_path, **model_load_kwargs)
-                model.enable_input_require_grads()
+                if args.gradient_checkpointing:
+                    model.enable_input_require_grads()
                 model = PeftModel.from_pretrained(model, model_id=args.checkpoint)
             else:
                 model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
@@ -458,16 +461,18 @@ def main():
             logger.info(f"Loaded config class: {type(config)}")
             model = model_class.from_pretrained(args.model_name_or_path, config=config, **model_load_kwargs)
             if args.use_peft:
-                model.enable_input_require_grads()
+                if args.gradient_checkpointing:
+                    model.enable_input_require_grads()
                 model = get_peft_model(model, peft_config)
             tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
             logger.info(f"Loaded tokenizer: {type(tokenizer)}")
 
             tokenizer.add_special_tokens(SPECIAL_TOKENS)
             tokenizer.model_max_length = min(MAX_DESIRED_LENGTH, tokenizer.model_max_length)
-            model.resize_token_embeddings(len(tokenizer))
+        model.resize_token_embeddings(len(tokenizer))
 
-        model.gradient_checkpointing_enable()
+        if args.gradient_checkpointing:
+            model.gradient_checkpointing_enable()
 
         # load datasets and train the model
         train_dataset = dataset_class(dataset_args, tokenizer, split_type="train")

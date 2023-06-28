@@ -436,9 +436,10 @@ class ResponseGenerationDataset(BaseDataset):
         elif self.args.gen_task.lower() == "causal_lm":
             sequence = [prompt] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [prompt_postfix] + [sequence_with_speaker[-1]] + [[self.eos]]
             source_seq = [prompt] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [prompt_postfix]
-            source_len = len(list(chain(*source_seq)))
             instance["input_ids"] = list(chain(*sequence))
+
             labels = copy.deepcopy(instance["input_ids"])
+            source_len = len(list(chain(*source_seq)))
             labels[:source_len] = [-100] * source_len
             instance["lm_labels"] = labels
         else:
@@ -448,8 +449,6 @@ class ResponseGenerationDataset(BaseDataset):
     def collate_fn(self, batch):
         input_ids = [ins["input_ids"] for ins in batch]
         lm_labels = [ins["lm_labels"] for ins in batch]
-
-        resp_input_sample = self.tokenizer.decode(batch[0]["input_ids"])
 
         input_ids = torch.tensor(pad_ids(input_ids, self.pad))
         attention_mask = 1 - (input_ids == self.pad).int()

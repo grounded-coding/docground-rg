@@ -75,7 +75,22 @@ def run_batch_generation_train(args, model, batch, **kwargs):
     """ Run batch generation during training time """
     batch = tuple(input_tensor.to(args.device) for input_tensor in batch[:4])
     input_ids, attention_mask, lm_labels = batch
-    model_outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=lm_labels)
+    try:
+        model_outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=lm_labels)
+    except ValueError as e:
+        print("Exception occurred:", str(e))
+        print("input_ids shape: ", input_ids.shape)
+        print("attention_mask shape: ", attention_mask.shape)
+        print("lm_labels shape: ", lm_labels.shape)
+        tokenizer = kwargs.get('tokenizer')  # Get the tokenizer from kwargs
+        print("Decoded input_ids: ")
+        for i in input_ids:
+            print(tokenizer.decode(i))
+            
+        print("Decoded lm_labels: ")
+        for l in lm_labels:
+            print(tokenizer.decode(l))
+            
     loss = model_outputs[0]
     lm_logits = model_outputs[1]
     yield loss, lm_logits, torch.tensor([])
@@ -105,6 +120,8 @@ def run_batch_generation_sample(args, model, tokenizer, batch, dataset, accelera
     instance, sequence = dataset.build_input_from_segments(
         knowledge, history, current_output
     )
+    # set attention mask = 1 - (input_ids == self.pad).int() ?
+    # pass to generate with pad token id ?
 
     input_ids = torch.tensor(instance["input_ids"], device=args.device).unsqueeze(0)
     if gen_task.lower() == "causal_lm":

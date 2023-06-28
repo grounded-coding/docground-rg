@@ -73,8 +73,9 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, ge
     ]
 
     args.tokenizer = tokenizer
-    all_output_texts = []
     dialog_ids = []
+    all_sampled_outputs = []
+    all_ground_truths = []
     do_evaluate = False
     model.eval()
 
@@ -82,41 +83,51 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, ge
 
     for batch in tqdm(eval_dataloader, desc="Evaluating", disable=False):
         with torch.no_grad():
-            sampled_output_ids, ground_truth, dialog_id = run_batch_generation_func(args, model, tokenizer, batch,
-                                                                                    eval_dataset, accelerator=accelerator, gen_task=gen_task)
-            sampled_output_text = [tokenizer.decode(_sampled_output_ids, skip_special_tokens=True).lstrip() for
-                                   _sampled_output_ids in sampled_output_ids]
-            if len(sampled_output_text) == 1:
-                all_output_texts.append(sampled_output_text[0])
-            else:
-                all_output_texts.append(sampled_output_text)
-            dialog_ids.append(dialog_id)
+            sampled_output_ids, ground_truth, dialog_id = run_batch_generation_func(args, model, tokenizer, batch, eval_dataset, accelerator=accelerator, gen_task=gen_task)
+        dialog_ids.append(dialog_id)
+
         if ground_truth.strip() != "":
             do_evaluate = True
-            for metric in metrics:
-                metric.update((sampled_output_text[0], ground_truth))
+            ground_truth_ids = tokenizer.encode(ground_truth, return_tensors='pt').squeeze()
+            all_sampled_outputs.append(sampled_output_ids)
+            all_ground_truths.append(ground_truth_ids)
 
-    if args.output_file:
-        write_generation_preds(eval_dataset.dataset_walker, args.output_file, dialog_ids, all_output_texts)
+    # wait for all processes to finish
+    accelerator.wait_for_everyone()
+
+    # gather outputs and ground truths on all processes
+    all_sampled_outputs = accelerator.gather(all_sampled_outputs)
+    all_ground_truths = accelerator.gather(all_ground_truths)
 
     result = dict()
-    if do_evaluate:
-        output_eval_file = os.path.join(eval_output_dir, f"eval_results_{args.task}.txt")
-        with open(output_eval_file, "a") as writer:
-            logger.info("***** Eval results %s *****" % desc)
-            writer.write("***** Eval results %s *****\n" % desc)
-            for metric in metrics:
-                name = metric.name()
-                score = metric.compute()
-                if metric.is_single:
-                    result[name] = score
-                    logger.info("  %s = %s", name, str(score))
-                    writer.write("%s = %s\n" % (name, str(score)))
-                else:
-                    for _name, _score in zip(name, score):
-                        result[_name] = _score
-                        logger.info("  %s = %s", _name, str(_score))
-                        writer.write("%s = %s\n" % (_name, str(_score)))
+    if accelerator.is_main_process:
+        # Decode on main process
+        all_sampled_texts = [[tokenizer.decode(_sampled_output_ids, skip_special_tokens=True).lstrip() for _sampled_output_ids in sampled_outputs] for sampled_outputs in all_sampled_outputs]
+        all_ground_truths_text = [tokenizer.decode(_ground_truth, skip_special_tokens=True).lstrip() for _ground_truth in all_ground_truths]
+
+        if args.output_file:
+            write_generation_preds(eval_dataset.dataset_walker, args.output_file, dialog_ids, all_sampled_texts)
+
+        if do_evaluate:
+            output_eval_file = os.path.join(eval_output_dir, f"eval_results_{args.task}.txt")
+            with open(output_eval_file, "a") as writer:
+                logger.info("***** Eval results %s *****" % desc)
+                writer.write("***** Eval results %s *****\n" % desc)
+                for metric in metrics:
+                    for sampled_text, ground_truth_text in zip(all_sampled_texts, all_ground_truths_text):
+                        metric.update((sampled_text, ground_truth_text))
+                    
+                    name = metric.name()
+                    score = metric.compute()
+                    if metric.is_single:
+                        result[name] = score
+                        logger.info("  %s = %s", name, str(score))
+                        writer.write("%s = %s\n" % (name, str(score)))
+                    else:
+                        for _name, _score in zip(name, score):
+                            result[_name] = _score
+                            logger.info("  %s = %s", _name, str(_score))
+                            writer.write("%s = %s\n" % (_name, str(_score)))
 
     return result
 
