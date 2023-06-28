@@ -389,7 +389,9 @@ def main():
     # Set the timeout to 120 minutes if NCCL P2P communication fails on the cluster
     custom_timeout = timedelta(minutes=120)  
     init_kwargs = InitProcessGroupKwargs(timeout=custom_timeout)
-    accelerator = Accelerator(mixed_precision="fp16" if args.fp16 else "no", kwargs_handlers=[init_kwargs])
+    accelerator = Accelerator(mixed_precision="fp16" if args.fp16 else "no",
+                              gradient_accumulation_steps=args.gradient_accumulation_steps,
+                              kwargs_handlers=[init_kwargs])
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d : %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
