@@ -4,3 +4,5 @@ pred
 runs
 .deepspeed_env
 llama_old_train.err
+tmp
+.gitignore

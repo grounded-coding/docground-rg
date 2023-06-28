@@ -2,6 +2,7 @@
 
 # The first command-line argument is the model alias
 model_alias=$1
+debug_level=$5
 
 # Check if a model alias argument is provided
 if [ -z "$1" ]
@@ -10,10 +11,16 @@ then
   exit 1
 fi
 
+export ACCELERATE_HOME="/work/smt4/thulke/nils.hilgers/.cache/accelerate/"
+accelerate_config="${ACCELERATE_HOME}default_config.yaml"
+
 # Set CUDA environments
 versions_cuda="11.6"
 versions_cudnn="8.4"
 versions_acml="4.4.0"
+
+# The script doesn't support P2P for NCCL
+export NCCL_P2P_DISABLE=1
 
 export CUDA_HOME="/usr/local/cuda-${versions_cuda}"
 export LD_LIBRARY_PATH="/usr/local/cudnn-11.X-v${versions_cudnn}/lib:/usr/local/cuda-${versions_cuda}/lib64:/usr/local/cuda-${versions_cuda}/extras/CUPTI/lib64:/usr/local/acml-${versions_acml}/cblas_mp/lib:/usr/local/acml-${versions_acml}/gfortran64/lib:/usr/local/acml-${versions_acml}/gfortran64_mp/lib/"
@@ -25,8 +32,19 @@ partition=${2:-gpu_24gb}  # default to 'gpu_24gb' if not specified
 gpus=${3:-1}  # default to 1 if not specified
 cpu_mem=${4:-24}  # default to 24 if not specified
 
-train_command="/u/nils.hilgers/py-dstc/bin/accelerate launch --num_processes=${gpus} baseline.py --params_file baseline/configs/generation/${model_alias}_params.json --task generation --dataroot data --history_max_tokens 256 --knowledge_max_tokens 256 --knowledge_file knowledge.json --exp_name rg-review-${model_alias} --deepspeed"
-eval_command="/u/nils.hilgers/py-dstc/bin/accelerate launch --num_processes=${gpus} baseline.py --generate runs/rg-review-${model_alias} --generation_params_file baseline/configs/generation/generation_params.json --task generation --dataroot data --eval_dataset val --labels_file data/val/labels.json --knowledge_file knowledge.json --output_file pred/val/rg.${model_alias}.json --deepspeed"
+if [ "$gpus" -le 1 ]
+then
+  accelerate_config="${ACCELERATE_HOME}single_gpu.yaml"
+fi
+
+debug_flag=""
+if [ -n "$debug_level" ]
+then
+  debug_flag="--debug ${debug_level}"
+fi
+
+train_command="/u/nils.hilgers/py-dstc/bin/accelerate launch --config_file ${accelerate_config} --num_processes=${gpus} baseline.py --params_file baseline/configs/generation/${model_alias}_params.json --task generation --dataroot data --history_max_tokens 256 --knowledge_max_tokens 256 --knowledge_file knowledge.json --exp_name rg-review-${model_alias} ${debug_flag}"
+eval_command="/u/nils.hilgers/py-dstc/bin/accelerate launch --config_file ${accelerate_config} --num_processes=${gpus} baseline.py --generate runs/rg-review-${model_alias} --generation_params_file baseline/configs/generation/generation_params.json --task generation --dataroot data --eval_dataset val --labels_file data/val/labels.json --knowledge_file knowledge.json --output_file pred/val/rg.${model_alias}.json ${debug_flag}"
 
 mkdir -p runs/rg-review-"${model_alias}"
 mkdir -p pred/val
@@ -56,7 +74,7 @@ cat << EOF > tmp/eval_job_rg-review.sh
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4
 #SBATCH --gres=gpu:${gpus}
-#SBATCH --time=24:00:00
+#SBATCH --time=96:00:00
 #SBATCH -p ${partition}
 #SBATCH --mem=${cpu_mem}G
 #SBATCH --chdir=/u/nils.hilgers/setups/dstc11-track5

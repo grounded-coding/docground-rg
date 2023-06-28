@@ -1,4 +1,5 @@
 import argparse
+from datetime import timedelta
 import logging
 import os
 import random
@@ -6,7 +7,7 @@ import json
 import inspect
 from typing import Dict, Tuple
 
-from accelerate import Accelerator
+from accelerate import Accelerator, InitProcessGroupKwargs
 from accelerate.utils import set_seed
 import deepspeed
 from argparse import Namespace
@@ -127,7 +128,7 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
     set_seed(args.seed)  # for reproducibility
     val_loss = float('inf')
 
-    for _ in train_iterator:
+    for epoch in train_iterator:
         local_steps = 0  # update step
         tr_loss = 0.0
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=False)
@@ -146,6 +147,11 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
                     local_steps += 1
                     epoch_iterator.set_postfix(Loss=tr_loss / local_steps)
 
+        if epoch == 0:
+            # Save model checkpoint at least once if evaluation fails
+            accelerator.wait_for_everyone()
+            save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
+
         # Evaluate at the end of each epoch
         results = evaluate(args, eval_dataset, model, run_batch_fn_eval, desc=str(global_step), accelerator=accelerator)
         
@@ -161,7 +167,6 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
             logger.info(f"Find a smaller val loss measure {results['val_measure']}")
             val_loss = results['val_measure']
 
-            # Save model checkpoint
             accelerator.wait_for_everyone()
             save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
 
@@ -381,16 +386,17 @@ def main():
     dataset_args.eval_only = args.eval_only
     dataset_args.debug = args.debug
 
-    accelerator = Accelerator(mixed_precision="fp16" if args.fp16 else "no")
+    # Set the timeout to 120 minutes if NCCL P2P communication fails on the cluster
+    custom_timeout = timedelta(minutes=120)  
+    init_kwargs = InitProcessGroupKwargs(timeout=custom_timeout)
+    accelerator = Accelerator(mixed_precision="fp16" if args.fp16 else "no", kwargs_handlers=[init_kwargs])
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d : %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO
         )
 
-    # Set seed
     set_seed(args.seed)
-
     dataset_class, model_class, run_batch_fn_train, run_batch_fn_eval = get_classes(args)
 
     model_load_kwargs = {}
@@ -403,12 +409,14 @@ def main():
     if args.use_peft:
         from peft import LoraConfig, prepare_model_for_int8_training, get_peft_model, TaskType, PeftModel
         if args.task == "generation":
-            if dataset_args.gen_task == "causal_lm":
+            if dataset_args.gen_task in ["causal_lm"]:
                 lora_task_type = TaskType.CAUSAL_LM
                 target_modules = ["q_proj", "v_proj"] 
-            else:
+            elif dataset_args.gen_task in ["seq2seq_lm"]:
                 lora_task_type = TaskType.SEQ_2_SEQ_LM
                 target_modules = ["q", "v"]
+            else:
+                raise NotImplementedError()
             peft_config = LoraConfig(
                 task_type=lora_task_type, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1,
                 target_modules=target_modules

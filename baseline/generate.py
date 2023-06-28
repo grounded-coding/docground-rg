@@ -196,7 +196,6 @@ def main():
         raise ValueError(f"Unknown task {gen_task}")
         
     if args.load_in_8bit:
-        # For 8-bit this is required
         model_load_kwargs["device_map"] = "auto"
         model_load_kwargs["load_in_8bit"] = True
 
