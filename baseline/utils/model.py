@@ -4,6 +4,7 @@ import torch
 from transformers import PreTrainedModel
 
 from accelerate.logging import get_logger
+from ..dataset import IGNORE_INDEX, pad_ids
 
 logger = get_logger(__name__, log_level="INFO")
 
@@ -109,6 +110,7 @@ def run_batch_generation_eval(args, model, batch, **kwargs):
 def run_batch_generation_sample(args, model, tokenizer, batch, dataset, accelerator=None, gen_task="seq2seq_lm"):
     """ Run batch generation during test time
         Responses are decoded using beam search + sampling
+        Assumes an eval batch size of 1
     """
     current_output = []
 
@@ -120,12 +122,12 @@ def run_batch_generation_sample(args, model, tokenizer, batch, dataset, accelera
     instance, sequence = dataset.build_input_from_segments(
         knowledge, history, current_output
     )
-    # set attention mask = 1 - (input_ids == self.pad).int() ?
-    # pass to generate with pad token id ?
 
     input_ids = torch.tensor(instance["input_ids"], device=args.device).unsqueeze(0)
+    attention_mask = 1 - (input_ids == tokenizer.pad_token_id).int()
+
     if gen_task.lower() == "causal_lm":
-        current_output = model.generate(input_ids=input_ids, num_beams=args.num_beams,
+        current_output = model.generate(input_ids=input_ids, num_beams=args.num_beams, attention_mask=attention_mask,
                                         min_new_tokens=args.min_length, max_new_tokens=args.max_length,
                                         eos_token_id=tokenizer.eos_token_id, bos_token_id=tokenizer.bos_token_id,
                                     pad_token_id=tokenizer.pad_token_id, do_sample=args.do_sample, num_return_sequences=1)

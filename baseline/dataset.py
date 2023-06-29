@@ -17,8 +17,13 @@ from accelerate.logging import get_logger
 logger = get_logger(__name__, log_level="INFO")
 
 SPECIAL_TOKENS = {
-    "additional_special_tokens": ["<speaker1>", "<speaker2>", "<knowledge_sep>", "<knowledge_tag>"],
+    "additional_special_tokens": ["<speaker1>", "<speaker2>", "<knowledge_sep>", "<knowledge_tag>"]
 }
+IGNORE_INDEX = -100
+DEFAULT_PAD_TOKEN = "[PAD]"
+DEFAULT_EOS_TOKEN = "</s>"
+DEFAULT_BOS_TOKEN = "<s>"
+DEFAULT_UNK_TOKEN = "<unk>"
 
 
 class BaseDataset(torch.utils.data.Dataset):
@@ -32,10 +37,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.sep = self.tokenizer.sep_token_id
         self.bos = self.tokenizer.bos_token_id
         self.eos = self.tokenizer.eos_token_id
-        if self.tokenizer.pad_token_id:
-            self.pad = self.tokenizer.pad_token_id
-        else:
-            self.pad = self.eos
+        self.pad = self.tokenizer.pad_token_id
         self.SPECIAL_TOKENS = SPECIAL_TOKENS
 
         self.speaker1, self.speaker2, self.knowledge_sep, self.knowledge_tag = self.tokenizer.convert_tokens_to_ids(
@@ -440,7 +442,7 @@ class ResponseGenerationDataset(BaseDataset):
 
             labels = copy.deepcopy(instance["input_ids"])
             source_len = len(list(chain(*source_seq)))
-            labels[:source_len] = [-100] * source_len
+            labels[:source_len] = [IGNORE_INDEX] * source_len
             instance["lm_labels"] = labels
         else:
             raise ValueError(f"Unknown generation task: {self.args.gen_task}")
@@ -452,7 +454,7 @@ class ResponseGenerationDataset(BaseDataset):
 
         input_ids = torch.tensor(pad_ids(input_ids, self.pad))
         attention_mask = 1 - (input_ids == self.pad).int()
-        lm_labels = torch.tensor(pad_ids(lm_labels, -100))
+        lm_labels = torch.tensor(pad_ids(lm_labels, IGNORE_INDEX))
         return input_ids, attention_mask, lm_labels
 
 
