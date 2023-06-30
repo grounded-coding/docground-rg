@@ -8,7 +8,8 @@ import inspect
 from typing import Dict, Tuple
 
 from accelerate import Accelerator, InitProcessGroupKwargs
-from accelerate.utils import set_seed
+from accelerate.utils import set_seed, DistributedType
+import transformers
 from argparse import Namespace
 
 import numpy as np
@@ -32,7 +33,8 @@ from .dataset import (
     KnowledgeTurnDetectionDataset,
     KnowledgeSelectionDataset,
     ResponseGenerationDataset,
-    SPECIAL_TOKENS
+    SPECIAL_TOKENS,
+    DEFAULT_PAD_TOKEN
 )
 from .utils.argument import (
     set_default_params,
@@ -67,6 +69,29 @@ def get_cls_report(y_true, y_pred):
     return {"precision": precision_score(y_true, y_pred, average=None, zero_division=0)[1],
             "recall": recall_score(y_true, y_pred, average=None, zero_division=0)[1],
             "f1-score": f1_score(y_true, y_pred, average=None, zero_division=0)[1]}
+
+
+def smart_tokenizer_and_embedding_resize(
+    special_tokens_dict: Dict,
+    tokenizer: transformers.PreTrainedTokenizer,
+    model: transformers.PreTrainedModel,
+):
+    """Resize tokenizer and embedding.
+
+    Note: This is the unoptimized version that may make your embedding size not be divisible by 64.
+    """
+    num_new_tokens = tokenizer.add_special_tokens(special_tokens_dict)
+    model.resize_token_embeddings(len(tokenizer))
+
+    if num_new_tokens > 0:
+        input_embeddings = model.get_input_embeddings().weight.data
+        output_embeddings = model.get_output_embeddings().weight.data
+
+        input_embeddings_avg = input_embeddings[:-num_new_tokens].mean(dim=0, keepdim=True)
+        output_embeddings_avg = output_embeddings[:-num_new_tokens].mean(dim=0, keepdim=True)
+
+        input_embeddings[-num_new_tokens:] = input_embeddings_avg
+        output_embeddings[-num_new_tokens:] = output_embeddings_avg
 
 
 def get_classes(args):
@@ -375,7 +400,9 @@ def main():
         args = vars(args)
 
         update_additional_params(params, args)
+        # Set dtype for the model weights
         args.update(params)
+        args["torch_dtype"] = torch.float32 if not args["fp16"] else torch.float16
         args = Namespace(**args)
 
     args.params = params  # used for saving checkpoints
@@ -386,12 +413,7 @@ def main():
     dataset_args.eval_only = args.eval_only
     dataset_args.debug = args.debug
 
-    # Set the timeout to 120 minutes if NCCL P2P communication fails on the cluster
-    custom_timeout = timedelta(minutes=120)  
-    init_kwargs = InitProcessGroupKwargs(timeout=custom_timeout)
-    accelerator = Accelerator(mixed_precision="fp16" if args.fp16 else "no",
-                              gradient_accumulation_steps=args.gradient_accumulation_steps,
-                              kwargs_handlers=[init_kwargs])
+    accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps)
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d : %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
@@ -401,7 +423,7 @@ def main():
     set_seed(args.seed)
     dataset_class, model_class, run_batch_fn_train, run_batch_fn_eval = get_classes(args)
 
-    model_load_kwargs = {}
+    model_load_kwargs = {"torch_dtype": args.torch_dtype, "low_cpu_mem_usage": accelerator.distributed_type != DistributedType.DEEPSPEED}
     if args.load_in_8bit:
         model_load_kwargs["device_map"] = "auto"
         model_load_kwargs["load_in_8bit"] = True
@@ -438,6 +460,7 @@ def main():
         else:
             model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
 
+        model = model.to(args.device)
         tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
 
         # Evaluation
@@ -466,10 +489,17 @@ def main():
                 model = get_peft_model(model, peft_config)
             tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
             logger.info(f"Loaded tokenizer: {type(tokenizer)}")
-
-            tokenizer.add_special_tokens(SPECIAL_TOKENS)
             tokenizer.model_max_length = min(MAX_DESIRED_LENGTH, tokenizer.model_max_length)
-        model.resize_token_embeddings(len(tokenizer))
+
+            if tokenizer.pad_token is None:
+                SPECIAL_TOKENS["pad_token"] = DEFAULT_PAD_TOKEN
+
+            smart_tokenizer_and_embedding_resize(
+                special_tokens_dict=SPECIAL_TOKENS,
+                tokenizer=tokenizer,
+                model=model,
+            )
+        model = model.to(args.device)
 
         if args.gradient_checkpointing:
             model.gradient_checkpointing_enable()

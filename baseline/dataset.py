@@ -19,6 +19,8 @@ logger = get_logger(__name__, log_level="INFO")
 SPECIAL_TOKENS = {
     "additional_special_tokens": ["<speaker1>", "<speaker2>", "<knowledge_sep>", "<knowledge_tag>"],
 }
+IGNORE_INDEX = -100
+DEFAULT_PAD_TOKEN = "[PAD]"
 
 
 class BaseDataset(torch.utils.data.Dataset):
@@ -32,10 +34,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.sep = self.tokenizer.sep_token_id
         self.bos = self.tokenizer.bos_token_id
         self.eos = self.tokenizer.eos_token_id
-        if self.tokenizer.pad_token_id:
-            self.pad = self.tokenizer.pad_token_id
-        else:
-            self.pad = self.eos
+        self.pad = self.tokenizer.pad_token_id
         self.SPECIAL_TOKENS = SPECIAL_TOKENS
 
         self.speaker1, self.speaker2, self.knowledge_sep, self.knowledge_tag = self.tokenizer.convert_tokens_to_ids(
@@ -47,12 +46,14 @@ class BaseDataset(torch.utils.data.Dataset):
         self.knowledge_reader = KnowledgeReader(self.dataroot, args.knowledge_file)
         self.snippets = self._prepare_knowledge()
         self.prompt, self.prompt_postfix = self._prepare_prompt()
+        if args.prompting != "full":
+            self.prompt, self.prompt_postfix = [], []
         self._create_examples()
 
     def _prepare_prompt(self):
         """ Tokenize and encode the instruction-based prompt if necessary"""
-        base_prompt = "First you are given reviews and FAQs separated by <knowledge_sep>. "\
-                        "After <knowledge_tag> follows a conversation between <speaker1> and <speaker2>. "\
+        base_prompt = "First you are given reviews and FAQs separated by <knowledge_sep>."\
+                        "After <knowledge_tag> follows a conversation between <speaker1> and <speaker2>."\
                         "Complete the conversation as <speaker2> using the given information and answer concisely.\n\n"
         tokenized_prompt = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(base_prompt))
         base_prompt_postfix = "\n\n### Response:"
@@ -380,8 +381,8 @@ class ResponseGenerationDataset(BaseDataset):
 
     def __getitem__(self, index):
         example = self.examples[index]
-        prompt = self.prompt if self.args.prompting == "full" else []
-        prompt_postfix = self.prompt_postfix if self.args.prompting == "full" else []
+        prompt = self.prompt
+        prompt_postfix = self.prompt_postfix
         instance, _ = self.build_input_from_segments(
             example["knowledge"],
             example["history"],
@@ -434,13 +435,16 @@ class ResponseGenerationDataset(BaseDataset):
                 instance["lm_labels"] = [self.bos] + sequence_with_speaker[-1] + [self.eos]
         # For causal LM, we have to copy the input_ids to lm_labels
         elif self.args.gen_task.lower() == "causal_lm":
-            sequence = [prompt] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [prompt_postfix] + [sequence_with_speaker[-1]] + [[self.eos]]
-            source_seq = [prompt] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [prompt_postfix]
+            end_of_sequence = [sequence_with_speaker[-1]] + [[self.eos]]
+            end_len = len(list(chain(*end_of_sequence)))
+            sequence = [prompt] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [prompt_postfix] + end_of_sequence
+            
             instance["input_ids"] = list(chain(*sequence))
-
             labels = copy.deepcopy(instance["input_ids"])
-            source_len = len(list(chain(*source_seq)))
-            labels[:source_len] = [-100] * source_len
+            label_len = len(labels)
+            assert end_len < label_len
+
+            labels[:-end_len] = [IGNORE_INDEX] * (label_len - end_len)
             instance["lm_labels"] = labels
         else:
             raise ValueError(f"Unknown generation task: {self.args.gen_task}")
@@ -452,7 +456,8 @@ class ResponseGenerationDataset(BaseDataset):
 
         input_ids = torch.tensor(pad_ids(input_ids, self.pad))
         attention_mask = 1 - (input_ids == self.pad).int()
-        lm_labels = torch.tensor(pad_ids(lm_labels, -100))
+        lm_labels = torch.tensor(pad_ids(lm_labels, IGNORE_INDEX))
+        assert (lm_labels != -100).any()
         return input_ids, attention_mask, lm_labels
 
 

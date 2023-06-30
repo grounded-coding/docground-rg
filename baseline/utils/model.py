@@ -1,7 +1,8 @@
 import copy
-
+import traceback
 import torch
 from transformers import PreTrainedModel
+from ..dataset import IGNORE_INDEX
 
 from accelerate.logging import get_logger
 
@@ -78,6 +79,7 @@ def run_batch_generation_train(args, model, batch, **kwargs):
     try:
         model_outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=lm_labels)
     except ValueError as e:
+        traceback.print_exc()
         print("Exception occurred:", str(e))
         print("input_ids shape: ", input_ids.shape)
         print("attention_mask shape: ", attention_mask.shape)
@@ -89,6 +91,7 @@ def run_batch_generation_train(args, model, batch, **kwargs):
             
         print("Decoded lm_labels: ")
         for l in lm_labels:
+            l = torch.where(l != IGNORE_INDEX, l, tokenizer.pad_token_id)
             print(tokenizer.decode(l))
             
     loss = model_outputs[0]
@@ -118,14 +121,15 @@ def run_batch_generation_sample(args, model, tokenizer, batch, dataset, accelera
     dialog_id = example["dialog_id"]
 
     instance, sequence = dataset.build_input_from_segments(
-        knowledge, history, current_output
+        knowledge, history, current_output, dataset.prompt, dataset.prompt_postfix
     )
-    # set attention mask = 1 - (input_ids == self.pad).int() ?
-    # pass to generate with pad token id ?
 
     input_ids = torch.tensor(instance["input_ids"], device=args.device).unsqueeze(0)
+    input_text = tokenizer.decode(instance["input_ids"])
+    attention_mask = 1 - (input_ids == tokenizer.pad_token_id).int()
+
     if gen_task.lower() == "causal_lm":
-        current_output = model.generate(input_ids=input_ids, num_beams=args.num_beams,
+        current_output = model.generate(input_ids=input_ids, num_beams=args.num_beams, attention_mask=attention_mask,
                                         min_new_tokens=args.min_length, max_new_tokens=args.max_length,
                                         eos_token_id=tokenizer.eos_token_id, bos_token_id=tokenizer.bos_token_id,
                                     pad_token_id=tokenizer.pad_token_id, do_sample=args.do_sample, num_return_sequences=1)

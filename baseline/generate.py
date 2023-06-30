@@ -5,17 +5,18 @@ import json
 
 from typing import Dict
 from argparse import Namespace
+from accelerate.utils import DistributedType
 
 import numpy as np
+from peft import PeftModel
 import logging
-from accelerate import Accelerator, init_empty_weights, load_checkpoint_and_dispatch
+from accelerate import Accelerator
 from accelerate.utils import set_seed
 
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
 from tqdm import tqdm
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM
-from transformers.deepspeed import HfDeepSpeedConfig
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoConfig
 from .dataset import ResponseGenerationEvalDataset, ResponseGenerationDataset
 
 from .utils.argument import update_additional_params
@@ -175,6 +176,7 @@ def main():
         args = vars(args)
         update_additional_params(params, args)
         args.update(params)
+        args["torch_dtype"] = torch.float32 if not args["fp16"] else torch.float16
         if len(args["generation_params_file"]) > 0:
             with open(args["generation_params_file"]) as fg:
                 generation_params = json.load(fg)
@@ -187,12 +189,16 @@ def main():
     dataset_args.generate = args.generate
     dataset_args.debug = args.debug
 
+    
+    accelerator = Accelerator()
+    model_load_kwargs = {"torch_dtype": args.torch_dtype, "low_cpu_mem_usage": accelerator.distributed_type != DistributedType.DEEPSPEED}
+    if args.load_in_8bit:
+        model_load_kwargs["device_map"] = "auto"
+        model_load_kwargs["load_in_8bit"] = True
+
     # Set seed
     set_seed(args.seed)
-    
-    model_load_kwargs = {}
 
-    accelerator = Accelerator()
     args.device = accelerator.device
 
     args.output_dir = args.checkpoint
@@ -204,20 +210,18 @@ def main():
         model_class = AutoModelForCausalLM
     else:
         raise ValueError(f"Unknown task {gen_task}")
-        
-    if args.load_in_8bit:
-        model_load_kwargs["device_map"] = "auto"
-        model_load_kwargs["load_in_8bit"] = True
 
     logger.info("Generation parameters %s", args)
     logger.info("Model inference parameters %s", model_load_kwargs)
 
     if args.use_peft:
-            from peft import PeftModel
-            model = model_class.from_pretrained(args.model_name_or_path, **model_load_kwargs)
+            config = AutoConfig.from_pretrained(args.model_name_or_path)
+            logger.info(f"Loaded config class: {type(config)}")
+            model = model_class.from_pretrained(args.model_name_or_path, config=config, **model_load_kwargs)
             model = PeftModel.from_pretrained(model, model_id=args.checkpoint)
     else:
         model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
+    model = model.to(args.device)
     model.resize_token_embeddings(len(tokenizer))
 
     # Evaluation
