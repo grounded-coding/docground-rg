@@ -1,4 +1,7 @@
+import json
+
 import numpy as np
+import paramiko
 
 from nltk import bigrams as get_bigrams
 from nltk import trigrams as get_trigrams
@@ -23,6 +26,69 @@ def get_fourgrams(sequence, **kwargs):
 
     for item in ngrams(sequence, 4, **kwargs):
         yield item
+
+
+class RemoteMeteorMetric:
+    def __init__(self, hostname, port, private_key_path):
+        """
+        Initialize the RemoteMeteorMetric instance.
+
+        Args:
+            hostname (str): The host name or IP address of the remote machine.
+            port (int): The port number to connect to on the remote machine.
+            private_key_path (str): Path to the private key for SSH authentication.
+        """
+
+        # Create a new SSH client
+        self.client = paramiko.SSHClient()
+
+        # Automatically add the server's SSH key without requiring human intervention
+        self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        # Load the private key for authentication
+        private_key = paramiko.RSAKey(filename=private_key_path)
+
+        # Connect to the remote machine
+        self.client.connect(hostname, port=port, username="username", pkey=private_key)  # replace "username" with your actual username
+
+    def evaluate_batch(self, pred_responses, ref_responses):
+        """
+        Evaluate the METEOR metric on a batch of predicted and reference responses.
+
+        Args:
+            pred_responses (list): The list of predicted responses.
+            ref_responses (list): The list of reference responses.
+
+        Returns:
+            float: The computed METEOR metric.
+        """
+
+        # Convert the responses to JSON format, which can be easily transferred to the remote machine
+        pred_responses_str = json.dumps(pred_responses)
+        ref_responses_str = json.dumps(ref_responses)
+
+        # Construct the command to be executed on the remote machine
+        # Replace "/path/to/script" with the actual path to the Python script on the remote machine
+        # that will compute the METEOR metric
+        command = f'python3 /u/nils.hilgers/setups/dstc11-track5/scripts/remote_meteor.py' \
+                  f' "{pred_responses_str}" "{ref_responses_str}"'
+
+        # Execute the command on the remote machine
+        stdin, stdout, stderr = self.client.exec_command(command)
+
+        # Read the output of the command, which should be the METEOR metric
+        # Convert the output from string format to float
+        output = stdout.read()
+        metric = float(output)
+
+        return metric
+
+    def close(self):
+        """
+        Close the SSH connection.
+        """
+
+        self.client.close()
 
 
 class Metric:
@@ -246,7 +312,10 @@ class METEOR(DataCacheMetric):
     def compute(self):
         if len(self.preds) == 0:
             raise ValueError("METEOR must have at least one example before it can be computed!")
-        metric = MeteorMetric()
+        try:
+            metric = MeteorMetric()
+        except FileNotFoundError:
+            metric = RemoteMeteorMetric()
         score = metric.evaluate_batch(self.preds, self.refs)
         return score['meteor'] * 100
 
