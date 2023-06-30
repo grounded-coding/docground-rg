@@ -1,12 +1,14 @@
 {
-"gradient_accumulation_steps": 8,
-"train_micro_batch_size_per_gpu": 1,
+"train_micro_batch_size_per_gpu": "auto",
 "train_batch_size": "auto",
 "fp16": {
-    "enabled": true
+    "enabled": "auto"
 },
 "zero_optimization": {
-    "stage": 3
+    "stage": 3,
+    "offload_param": {
+        "device": "cpu"
+    }
 },
 "activation_checkpointing": {
     "partition_activations": true,

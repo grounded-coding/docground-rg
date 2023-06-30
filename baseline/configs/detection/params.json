@@ -18,7 +18,7 @@
   "num_train_epochs": 10,
   "warmup_steps": 0,
 
-  "fp16": "",
+  "fp16": false,
 
   "seed": 42
 }
