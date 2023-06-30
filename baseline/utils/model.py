@@ -121,7 +121,7 @@ def run_batch_generation_sample(args, model, tokenizer, batch, dataset, accelera
     dialog_id = example["dialog_id"]
 
     instance, sequence = dataset.build_input_from_segments(
-        knowledge, history, current_output, dataset.prompt, dataset.prompt_postfix
+        knowledge, history, response=[], prompt=dataset.prompt, prompt_postfix=dataset.prompt_postfix
     )
 
     input_ids = torch.tensor(instance["input_ids"], device=args.device).unsqueeze(0)

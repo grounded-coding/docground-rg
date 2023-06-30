@@ -435,7 +435,11 @@ class ResponseGenerationDataset(BaseDataset):
                 instance["lm_labels"] = [self.bos] + sequence_with_speaker[-1] + [self.eos]
         # For causal LM, we have to copy the input_ids to lm_labels
         elif self.args.gen_task.lower() == "causal_lm":
-            end_of_sequence = [sequence_with_speaker[-1]] + [[self.eos]]
+            # For inference of causal models
+            if response == []:
+                end_of_sequence = []
+            else:
+                end_of_sequence = [sequence_with_speaker[-1]] + [[self.eos]]
             end_len = len(list(chain(*end_of_sequence)))
             sequence = [prompt] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [prompt_postfix] + end_of_sequence
             

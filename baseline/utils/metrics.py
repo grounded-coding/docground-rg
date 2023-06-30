@@ -14,6 +14,12 @@ from summ_eval.meteor_metric import MeteorMetric
 
 from .data import normalize
 
+USER = "nils.hilgers"
+REMOTE_METEOR_LOCATION = "/u/nils.hilgers/setups/dstc11-track5/scripts/remote_meteor.py"
+PRIV_KEY = "/u/nils.hilgers/.ssh/id_rsa"
+REMOTE_MACHINE = "blei"
+REMOTE_PORT = 22
+
 
 def get_fourgrams(sequence, **kwargs):
     """
@@ -49,7 +55,7 @@ class RemoteMeteorMetric:
         private_key = paramiko.RSAKey(filename=private_key_path)
 
         # Connect to the remote machine
-        self.client.connect(hostname, port=port, username="username", pkey=private_key)  # replace "username" with your actual username
+        self.client.connect(hostname, port=port, username=USER, pkey=private_key)
 
     def evaluate_batch(self, pred_responses, ref_responses):
         """
@@ -68,9 +74,7 @@ class RemoteMeteorMetric:
         ref_responses_str = json.dumps(ref_responses)
 
         # Construct the command to be executed on the remote machine
-        # Replace "/path/to/script" with the actual path to the Python script on the remote machine
-        # that will compute the METEOR metric
-        command = f'python3 /u/nils.hilgers/setups/dstc11-track5/scripts/remote_meteor.py' \
+        command = f'python3 {REMOTE_METEOR_LOCATION}' \
                   f' "{pred_responses_str}" "{ref_responses_str}"'
 
         # Execute the command on the remote machine
@@ -312,11 +316,15 @@ class METEOR(DataCacheMetric):
     def compute(self):
         if len(self.preds) == 0:
             raise ValueError("METEOR must have at least one example before it can be computed!")
+        remote = False
         try:
             metric = MeteorMetric()
         except FileNotFoundError:
-            metric = RemoteMeteorMetric()
+            metric = RemoteMeteorMetric(REMOTE_MACHINE, REMOTE_PORT, PRIV_KEY)
+            remote = True
         score = metric.evaluate_batch(self.preds, self.refs)
+        if remote:
+            metric.close()
         return score['meteor'] * 100
 
     def name(self):
