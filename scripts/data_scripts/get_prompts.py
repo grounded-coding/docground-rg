@@ -2,7 +2,7 @@ import json
 from itertools import groupby
 from operator import itemgetter
 
-def get_prompt(id, label_print=False, dataset="test", max_turns=None, max_n_sent=None):
+def get_prompt(id, label_print=False, dataset="val", max_turns=None, max_n_sent=None, base_prompt=False):
 
     with open(f'/u/nils.hilgers/setups/dstc11-track5/data/knowledge.json', encoding="utf-8") as f:
         knowledge = json.load(f)
@@ -53,13 +53,14 @@ def get_prompt(id, label_print=False, dataset="test", max_turns=None, max_n_sent
             n_sent += 1
 
             # Add a separator if this is a new document
-            if entity_id != current_entity_id:
-                sentences.append(f"({entity_name}) {domain}")
-            if doc_id != current_doc_id:
-                if doc_type != "faqs":
-                    sentences.append(f":R:" )
-                else:
-                    sentences.append(f":F:" )
+            #if entity_id != current_entity_id:
+                # STYLE
+            sentences.append(f"({entity_name})")
+            # if doc_id != current_doc_id:
+            #    if doc_type != "faqs":
+            #        sentences.append(f":R:" )
+            #    else:
+            #        sentences.append(f":F:" )
             current_doc_id = doc_id
             current_entity_id = entity_id
 
@@ -72,9 +73,9 @@ def get_prompt(id, label_print=False, dataset="test", max_turns=None, max_n_sent
     # If max_turns is set, only use the last max_turns turns
     for log in turns[-max_turns:]:
         if log['speaker'] == 'U':
-            selected_turns.append(":U: " + log['text'])
+            selected_turns.append("User: " + log['text'])
         elif log['speaker'] == 'S':
-            selected_turns.append(":S: " + log['text'])
+            selected_turns.append("Assistant: " + log['text'])
         n_turns += 1
         if max_turns is not None and n_turns + 1 > max_turns:
             break
@@ -83,6 +84,10 @@ def get_prompt(id, label_print=False, dataset="test", max_turns=None, max_n_sent
     label = labels[id]['response']
     if label_print:
         selected_turns.append(f":S: {label}")
-    output = ' '.join(sentences) + ' '.join(selected_turns)
+    if base_prompt:
+        output = "Below is a context with customer reviews and FAQs for hotels and restaurants, " \
+                      "paired with a conversation between User and Assistant. " \
+                      "Answer the question from User appropriately as Assistant."
+    output += '\n\n### Context:\n' + ' '.join(sentences) + '\n\n### Conversation:\n' + ' '.join(selected_turns)
 
     return output, True

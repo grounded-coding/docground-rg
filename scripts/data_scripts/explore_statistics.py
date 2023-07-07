@@ -3,7 +3,7 @@ import json
 def print_stats(dataset="val"):
 
     # Load data
-    with open(f'/u/nils.hilgers/setups/dstc11-track5/data/knowledge.json', encoding="utf-8") as f:
+    with open(f'/data/knowledge.json', encoding="utf-8") as f:
         knowledge = json.load(f)
 
     with open(f'/u/nils.hilgers/setups/dstc11-track5/data/{dataset}/labels.json', encoding="utf-8") as f:

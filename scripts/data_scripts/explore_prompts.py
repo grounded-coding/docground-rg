@@ -15,5 +15,5 @@ while True:
             continue
         else:
             raise ValueError("Unknown input.")
-    print(get_prompt(id, label_print, max_turns=3, max_n_sent=100)[0])
+    print(get_prompt(id, dataset="val", label_print=label_print, max_turns=3, max_n_sent=100, base_prompt=True)[0])
     
