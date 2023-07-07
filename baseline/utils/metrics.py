@@ -2,11 +2,14 @@ import json
 
 import numpy as np
 import paramiko
+import torch
 
 from nltk import bigrams as get_bigrams
 from nltk import trigrams as get_trigrams
 from nltk import word_tokenize, ngrams
 from collections import Counter
+from pynvml import *
+import os
 
 from rouge_score import rouge_scorer
 from summ_eval.bleu_metric import BleuMetric
@@ -20,6 +23,22 @@ PRIV_KEY = "/u/nils.hilgers/.ssh/id_rsa"
 REMOTE_MACHINE = "blei"
 REMOTE_PORT = 22
 
+if torch.cuda.is_available():
+    nvmlInit()
+
+def print_gpu_utilization(args, output_str="", filename="mem_gpu_usage.log"):
+    if torch.cuda.is_available():
+        cuda_visible_devices = os.environ.get('CUDA_VISIBLE_DEVICES', '')
+        cuda_visible_devices = [int(i) for i in cuda_visible_devices.split(',') if i.strip().isdigit()]
+
+        total_memory_used = 0
+        for i in cuda_visible_devices:
+            handle = nvmlDeviceGetHandleByIndex(i)
+            info = nvmlDeviceGetMemoryInfo(handle)
+            total_memory_used += info.used
+
+        with open(os.path.join(args.output_dir, filename), "a") as f:
+            f.write(f"Total GPU memory occupied {output_str}: {total_memory_used // 1024 ** 2} MB.\n")
 
 def get_fourgrams(sequence, **kwargs):
     """

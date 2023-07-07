@@ -12,6 +12,7 @@ from peft import PeftModel
 import logging
 from accelerate import Accelerator
 from accelerate.utils import set_seed
+from torch.nn.utils.rnn import pad_sequence
 
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
@@ -25,7 +26,8 @@ from .utils.metrics import (
     DataCacheMetric,
     UnigramMetric, NGramDiversity,
     CorpusNGramDiversity,
-    BLEU, METEOR, ROUGE
+    BLEU, METEOR, ROUGE,
+    print_gpu_utilization
 )
 from .utils.data import write_generation_preds
 
@@ -90,22 +92,45 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, ge
         if ground_truth.strip() != "":
             do_evaluate = True
             ground_truth_ids = tokenizer.encode(ground_truth, return_tensors='pt').squeeze()
-            all_sampled_outputs.append(sampled_output_ids)
-            all_ground_truths.append(ground_truth_ids)
+            all_sampled_outputs.append(sampled_output_ids.to(args.device))
+            all_ground_truths.append(ground_truth_ids.to(args.device))
 
     # wait for all processes to finish
     accelerator.wait_for_everyone()
+    pad_token_id = tokenizer.pad_token_id
+    
+    def convert_to_padded_tensor(tensor_list):
+        ### This only works when we retrieve only the best output from beam search.
+        tensor_list = [t.squeeze(0) for t in tensor_list] 
+        padded_tensor = accelerator.pad_across_processes(tensor_list, pad_index=pad_token_id)
+        padded_tensor = pad_sequence(padded_tensor, batch_first=True, padding_value=pad_token_id)
+        return padded_tensor
 
-    # gather outputs and ground truths on all processes
+    # Convert lists to padded tensors
+    all_sampled_outputs = convert_to_padded_tensor(all_sampled_outputs).to(args.device)
+    all_ground_truths = convert_to_padded_tensor(all_ground_truths).to(args.device)
+
+    # Gather the tensors
+    logger.info("Gathering results from all GPUs")
     all_sampled_outputs = accelerator.gather(all_sampled_outputs)
     all_ground_truths = accelerator.gather(all_ground_truths)
-
     result = dict()
-    if accelerator.is_main_process:
-        # Decode on main process
-        all_sampled_texts = [[tokenizer.decode(_sampled_output_ids, skip_special_tokens=True).lstrip() for _sampled_output_ids in sampled_outputs] for sampled_outputs in all_sampled_outputs]
-        all_ground_truths_text = [tokenizer.decode(_ground_truth, skip_special_tokens=True).lstrip() for _ground_truth in all_ground_truths]
 
+    if accelerator.is_main_process:
+        # Remove padding and convert back to lists
+        logger.info(f"Gathered results from all GPUs. Preparing results for decoding.")
+        all_sampled_outputs = all_sampled_outputs.tolist()
+        all_ground_truths = all_ground_truths.tolist()
+        logger.info("Converted tensors back to lists on CPU. Continuing with decoding")
+
+        all_sampled_texts = [[tokenizer.decode(sampled_output, skip_special_tokens=True) for sampled_output in sampled_outputs] for sampled_outputs in all_sampled_outputs]
+        all_ground_truths_text = [tokenizer.decode(ground_truth, skip_special_tokens=True) for ground_truth in all_ground_truths]
+        logger.info("Finished decoding. Continuing with text stripping and writing the predictions.")
+        
+        # Remove leading white spaces if necessary
+        all_sampled_texts = [[text.lstrip() for text in texts] for texts in all_sampled_texts]
+        all_ground_truths_text = [text.lstrip() for text in all_ground_truths_text]
+        
         if args.output_file:
             write_generation_preds(eval_dataset.dataset_walker, args.output_file, dialog_ids, all_sampled_texts)
 
@@ -160,6 +185,7 @@ def main():
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device (cuda or cpu)")
     parser.add_argument("--prompting", type=str, default="no", help="Adds instruction prompts to the dataset for causal LM")
+    parser.add_argument("--debug_fill", action="store_true", help="If set, will fill all inputs by max_desired_len up with a random number")
     args = parser.parse_args()
 
     # Setup logging
@@ -188,8 +214,10 @@ def main():
     dataset_args.task = args.task
     dataset_args.generate = args.generate
     dataset_args.debug = args.debug
+    args.output_dir = args.checkpoint
+    args.device = accelerator.device
 
-    
+    print_gpu_utilization(args, "after loading the drivers")
     accelerator = Accelerator()
     model_load_kwargs = {"torch_dtype": args.torch_dtype, "low_cpu_mem_usage": accelerator.distributed_type != DistributedType.DEEPSPEED}
     if args.load_in_8bit:
@@ -199,9 +227,6 @@ def main():
     # Set seed
     set_seed(args.seed)
 
-    args.device = accelerator.device
-
-    args.output_dir = args.checkpoint
     gen_task = dataset_args.gen_task
     tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
     if gen_task.lower() == "seq2seq_lm":
@@ -223,13 +248,14 @@ def main():
         model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
     model = model.to(args.device)
     model.resize_token_embeddings(len(tokenizer))
+    print_gpu_utilization(args, "after loading the model weights")
 
     # Evaluation
     eval_dataset = ResponseGenerationEvalDataset(dataset_args, tokenizer, split_type=args.eval_dataset,
                                                  labels_file=args.labels_file)
 
     result = evaluate(args, eval_dataset, model, tokenizer, desc=args.eval_desc or "val", accelerator=accelerator, gen_task=gen_task)
-
+    print_gpu_utilization(args, "after finishing the inference")
     return result
 
 

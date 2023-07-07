@@ -45,18 +45,27 @@ class BaseDataset(torch.utils.data.Dataset):
         self.dialogs = self._prepare_conversations()
         self.knowledge_reader = KnowledgeReader(self.dataroot, args.knowledge_file)
         self.snippets = self._prepare_knowledge()
-        self.prompt, self.prompt_postfix = self._prepare_prompt()
-        if args.prompting != "full":
+        if not hasattr(args, "prompting") or args.prompting not in ["alpaca", "oasst"]:
             self.prompt, self.prompt_postfix = [], []
+        else:
+            self.prompt, self.prompt_postfix = self._prepare_prompt()
         self._create_examples()
 
     def _prepare_prompt(self):
         """ Tokenize and encode the instruction-based prompt if necessary"""
-        base_prompt = "First you are given reviews and FAQs separated by <knowledge_sep>."\
-                        "After <knowledge_tag> follows a conversation between <speaker1> and <speaker2>."\
-                        "Complete the conversation as <speaker2> using the given information and answer concisely.\n\n"
+        base_prompt = ""
+        if self.args.prompting == "oasst":
+            base_prompt += "<|prompter|>"
+        base_prompt += "Below is a context with customer reviews and FAQs for hotels and restaurants, " \
+                      "paired with a conversation between <speaker1> and <speaker2>. " \
+                      "Answer the question from <speaker2> appropriately as <speaker1>.\n\n### Context:"        
         tokenized_prompt = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(base_prompt))
-        base_prompt_postfix = "\n\n### Response:"
+        if self.args.prompting == "alpaca":
+            base_prompt_postfix = "\n\n### Response:"
+        elif self.args.prompting == "oasst":
+            base_prompt_postfix = "<|endoftext|><|assistant|>"
+        else:
+            raise NotImplementedError()
         tokenized_prompt_postfix = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(base_prompt_postfix))
         return tokenized_prompt, tokenized_prompt_postfix
     
@@ -423,35 +432,40 @@ class ResponseGenerationDataset(BaseDataset):
         history = list(chain(*sequence_with_speaker[:-1]))[:max_history_len]
 
         # If we have a T5 tokenizer, we need to add EOS token to the end of the sequence
-        if self.args.gen_task.lower() == "seq2seq_lm":
-            if 't5' in str(type(self.tokenizer)):
-                sequence = [sequence[0]] + [[self.knowledge_tag]] + [history] + [[self.eos]]
-                instance["input_ids"] = list(chain(*sequence))
-                instance["lm_labels"] = sequence_with_speaker[-1] + [self.eos]
-                    # else we assume BART architecture with both BOS and EOS
-            else:
-                sequence = [[self.bos]] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [[self.eos]]
-                instance["input_ids"] = list(chain(*sequence))
-                instance["lm_labels"] = [self.bos] + sequence_with_speaker[-1] + [self.eos]
-        # For causal LM, we have to copy the input_ids to lm_labels
-        elif self.args.gen_task.lower() == "causal_lm":
-            # For inference of causal models
-            if response == []:
-                end_of_sequence = []
-            else:
-                end_of_sequence = [sequence_with_speaker[-1]] + [[self.eos]]
-            end_len = len(list(chain(*end_of_sequence)))
-            sequence = [prompt] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [prompt_postfix] + end_of_sequence
-            
-            instance["input_ids"] = list(chain(*sequence))
-            labels = copy.deepcopy(instance["input_ids"])
-            label_len = len(labels)
-            assert end_len < label_len
-
-            labels[:-end_len] = [IGNORE_INDEX] * (label_len - end_len)
-            instance["lm_labels"] = labels
+        if self.args.debug_fill:
+                instance["input_ids"] = [36] * entire_input_len
+                instance["lm_labels"] = [36] * entire_input_len
         else:
-            raise ValueError(f"Unknown generation task: {self.args.gen_task}")
+            if self.args.gen_task.lower() == "seq2seq_lm":
+                if 't5' in str(type(self.tokenizer)):
+                    sequence = [sequence[0]] + [[self.knowledge_tag]] + [history] + [[self.eos]]
+                    instance["input_ids"] = list(chain(*sequence))
+                    instance["lm_labels"] = sequence_with_speaker[-1] + [self.eos]
+                        # else we assume BART architecture with both BOS and EOS
+                else:
+                    sequence = [[self.bos]] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [[self.eos]]
+                    instance["input_ids"] = list(chain(*sequence))
+                    instance["lm_labels"] = [self.bos] + sequence_with_speaker[-1] + [self.eos]
+            # For causal LM, we have to copy the input_ids to lm_labels
+            elif self.args.gen_task.lower() == "causal_lm":
+                # For inference of causal models
+                if response == []:
+                    end_of_sequence = []
+                else:
+                    end_of_sequence = [sequence_with_speaker[-1]] + [[self.eos]]
+                end_len = len(list(chain(*end_of_sequence)))
+                sequence = [prompt] + [sequence[0]] + [[self.knowledge_tag]] + [history] + [prompt_postfix] + end_of_sequence
+                
+                instance["input_ids"] = list(chain(*sequence))
+                labels = copy.deepcopy(instance["input_ids"])
+                label_len = len(labels)
+                assert end_len < label_len
+
+                labels[:-end_len] = [IGNORE_INDEX] * (label_len - end_len)
+                instance["lm_labels"] = labels
+
+            else:
+                raise ValueError(f"Unknown generation task: {self.args.gen_task}")
         return instance, sequence
 
     def collate_fn(self, batch):

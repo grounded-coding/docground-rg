@@ -11,6 +11,7 @@ from accelerate import Accelerator, InitProcessGroupKwargs
 from accelerate.utils import set_seed, DistributedType
 import transformers
 from argparse import Namespace
+from .utils.metrics import print_gpu_utilization
 
 import numpy as np
 import torch
@@ -61,7 +62,7 @@ except ImportError:
     from tensorboardX import SummaryWriter
 
 os.environ['TRANSFORMERS_OFFLINE'] = '1'
-MAX_DESIRED_LENGTH = 1024
+MAX_DESIRED_LENGTH = int(os.getenv('MAX_DESIRED_LEN', 1024))
 
 
 def get_cls_report(y_true, y_pred):
@@ -117,9 +118,8 @@ def get_classes(args):
 def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: PreTrainedTokenizer,
           run_batch_fn_train, run_batch_fn_eval, accelerator=None) -> Tuple[int, float]:
     """ Model training and evaluation """
-    log_dir = os.path.join("runs", args.exp_name) if args.exp_name else None
+    log_dir = args.output_dir
     tb_writer = SummaryWriter(log_dir)
-    args.output_dir = log_dir
 
     args.train_batch_size = args.per_device_train_batch_size
 
@@ -201,6 +201,7 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
                 logger.info(f"The val loss measure {results['val_measure']} is larger than "
                             f"the smallest val loss {val_loss}, continue to train ... ")
 
+    print_gpu_utilization(args, "after finishing the training")
     tb_writer.flush()
     tb_writer.close()
 
@@ -257,7 +258,7 @@ def evaluate(args, eval_dataset, model: PreTrainedModel, run_batch_fn, desc="", 
             eval_loss += loss.item()
         nb_eval_steps += 1
 
-    # TODO This is potentially wrong if there are duplicates in the batch introduced by Accelerate
+    # Eval loss could be slightly off with multiple GPUs due to duplicates on batch distribution
     all_losses = accelerator.gather(torch.tensor(eval_loss).to(accelerator.device))
     all_steps = len(eval_dataloader.dataset)
     eval_loss = torch.sum(all_losses) / all_steps
@@ -389,6 +390,7 @@ def main():
                         help="Optional description to be listed in eval_results.txt")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device (cuda or cpu)")
+    parser.add_argument("--debug_fill", action="store_true", help="If set, will fill all inputs by max_desired_len up with a random number")
 
     args = parser.parse_args()
 
@@ -435,7 +437,10 @@ def main():
         if args.task == "generation":
             if dataset_args.gen_task in ["causal_lm"]:
                 lora_task_type = TaskType.CAUSAL_LM
-                target_modules = ["q_proj", "v_proj"] 
+                if "pythia" in args.model_name_or_path:
+                    target_modules = ["query_key_value", "xxx"]
+                else:
+                    target_modules = ["q_proj", "v_proj"]
             elif dataset_args.gen_task in ["seq2seq_lm"]:
                 lora_task_type = TaskType.SEQ_2_SEQ_LM
                 target_modules = ["q", "v"]
@@ -449,6 +454,8 @@ def main():
             raise NotImplementedError("PEFT is only supported for generation task.")
         
     args.device = accelerator.device
+    args.output_dir = os.path.join("runs", args.exp_name) if args.exp_name else None
+    print_gpu_utilization(args, "after loading the drivers")
 
     if args.eval_only:
         args.output_dir = args.checkpoint
@@ -500,6 +507,7 @@ def main():
                 model=model,
             )
         model = model.to(args.device)
+        print_gpu_utilization(args, "after loading the model weights")
 
         if args.gradient_checkpointing:
             model.gradient_checkpointing_enable()

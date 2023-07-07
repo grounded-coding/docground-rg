@@ -44,6 +44,8 @@ def update_additional_params(params, args):
 
     if args.get("learning_rate", False):
         params["learning_rate"] = args["learning_rate"]
+        
+    params["dataset_args"]["debug_fill"] = args["debug_fill"]
 
     for key in ["history_max_tokens", "knowledge_max_tokens"]:
         if args.get(key, -1) > -1:

@@ -19,22 +19,21 @@
             "program": "baseline.py",
             "args": [
               "--params_file",
-              "baseline/configs/generation/bart-base_params.json",
+              "baseline/configs/generation/bart-base-decoder-debug_params.json",
               "--task",
               "generation",
               "--dataroot",
               "data",
-              "--history_max_tokens",
-              "256",
-              "--knowledge_max_tokens",
-              "256",
               "--knowledge_file",
               "knowledge.json",
               "--exp_name",
               "rg-review-bart-base-debug",
               "--debug",
-              "1"
+              "20"
             ],
+            "env": {
+              "MAX_DESIRED_LEN": "128"
+            },
             "cwd": "/u/nils.hilgers/setups/dstc11-track5",
             "console": "integratedTerminal"
           },
@@ -45,7 +44,7 @@
             "program": "baseline.py",
             "args": [
               "--generate",
-              "runs/rg-review-t5-base-peft",
+              "runs/rg-review-bart-base-debug",
               "--generation_params_file",
               "baseline/configs/generation/generation_params.json",
               "--task",
@@ -59,7 +58,9 @@
               "--knowledge_file",
               "knowledge.json",
               "--output_file",
-              "pred/val/rg.t5-base-peft.json"
+              "pred/val/rg.t5-base-debug.json",
+              "--debug",
+              "5000"
             ],
             "cwd": "/u/nils.hilgers/setups/dstc11-track5",
             "console": "integratedTerminal"
