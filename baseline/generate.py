@@ -123,7 +123,7 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, ge
         all_ground_truths = all_ground_truths.tolist()
         logger.info("Converted tensors back to lists on CPU. Continuing with decoding")
 
-        all_sampled_texts = [[tokenizer.decode(sampled_output, skip_special_tokens=True) for sampled_output in sampled_outputs] for sampled_outputs in all_sampled_outputs]
+        all_sampled_texts = [tokenizer.decode(sampled_output, skip_special_tokens=True) for sampled_output in all_sampled_outputs]
         all_ground_truths_text = [tokenizer.decode(ground_truth, skip_special_tokens=True) for ground_truth in all_ground_truths]
         logger.info("Finished decoding. Continuing with text stripping and writing the predictions.")
         
@@ -215,10 +215,10 @@ def main():
     dataset_args.generate = args.generate
     dataset_args.debug = args.debug
     args.output_dir = args.checkpoint
+    accelerator = Accelerator()
     args.device = accelerator.device
 
     print_gpu_utilization(args, "after loading the drivers")
-    accelerator = Accelerator()
     model_load_kwargs = {"torch_dtype": args.torch_dtype, "low_cpu_mem_usage": accelerator.distributed_type != DistributedType.DEEPSPEED}
     if args.load_in_8bit:
         model_load_kwargs["device_map"] = "auto"
