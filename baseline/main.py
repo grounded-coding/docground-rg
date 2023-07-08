@@ -16,6 +16,8 @@ from .utils.metrics import print_gpu_utilization
 import numpy as np
 import torch
 from sklearn.metrics import recall_score, precision_score, average_precision_score, classification_report, f1_score
+from deepspeed.utils.zero_to_fp32 import get_fp32_state_dict_from_zero_checkpoint
+from peft import get_peft_model_state_dict
 
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from tqdm import tqdm, trange
@@ -213,12 +215,27 @@ def save_model(args, output_dir, model, tokenizer, accelerator=None):
     os.makedirs(output_dir, exist_ok=True)
     logger.info("Saving model checkpoint to %s", output_dir)
     model = accelerator.unwrap_model(model)
-    model.save_pretrained(output_dir)
-    tokenizer.save_pretrained(output_dir)
-    accelerator.save(args, os.path.join(output_dir, "training_args.bin"))
-    with open(os.path.join(output_dir, "params.json"), "w") as jsonfile:
-        json.dump(args.params, jsonfile, indent=2, default=lambda x: str(x))
-    logger.info("Saving model config to %s", output_dir)
+
+    # When Zero 3 is used we need to gater the truncated adapter bins from multiple GPUs for Lora compatibility
+    if accelerator.is_main_process:
+        model.save_pretrained(output_dir)
+    if accelerator.distributed_type == DistributedType.DEEPSPEED:
+        model.save_checkpoint(output_dir)
+
+        if accelerator.is_main_process:
+            state_dict = get_fp32_state_dict_from_zero_checkpoint(output_dir) # already on cpu
+            if args.use_peft:
+                state_dict = get_peft_model_state_dict(model, state_dict=state_dict)
+                accelerator.save(state_dict, os.path.join(output_dir, "adapter_model.bin"))
+            else:
+                accelerator.save(state_dict, os.path.join(output_dir, "pytorch_model.bin"))
+
+    if accelerator.is_main_process:
+        tokenizer.save_pretrained(output_dir)
+        accelerator.save(args, os.path.join(output_dir, "training_args.bin"))
+        with open(os.path.join(output_dir, "params.json"), "w") as jsonfile:
+            json.dump(args.params, jsonfile, indent=2, default=lambda x: str(x))
+        logger.info("Saving model config to %s", output_dir)
 
 
 def evaluate(args, eval_dataset, model: PreTrainedModel, run_batch_fn, desc="", accelerator=None) -> Dict:
@@ -438,7 +455,7 @@ def main():
             if dataset_args.gen_task in ["causal_lm"]:
                 lora_task_type = TaskType.CAUSAL_LM
                 if "pythia" in args.model_name_or_path:
-                    target_modules = ["query_key_value", "xxx"]
+                    target_modules = ["query_key_value"]
                 else:
                     target_modules = ["q_proj", "v_proj"]
             elif dataset_args.gen_task in ["seq2seq_lm"]:

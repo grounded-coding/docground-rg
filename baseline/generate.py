@@ -98,16 +98,26 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, ge
     # wait for all processes to finish
     accelerator.wait_for_everyone()
     pad_token_id = tokenizer.pad_token_id
+
+    logger.info(f"The list of tensors for outputs has shape {[t.shape for t in all_sampled_outputs]}")
+    logger.info(f"The list of tensors for gts has shape {[t.shape for t in all_ground_truths]}")
     
-    def convert_to_padded_tensor(tensor_list):
-        ### This only works when we retrieve only the best output from beam search.
-        tensor_list = [t.squeeze(0) for t in tensor_list] 
-        padded_tensor = accelerator.pad_across_processes(tensor_list, pad_index=pad_token_id)
-        padded_tensor = pad_sequence(padded_tensor, batch_first=True, padding_value=pad_token_id)
-        return padded_tensor
+    def convert_to_padded_tensor(tensor_list, pad_dim=0):
+        tensor_list = accelerator.pad_across_processes(tensor_list, dim=pad_dim, pad_index=pad_token_id)
+        logger.info(f"The padded tensor at this point has shape {[t.shape for t in tensor_list]}")
+        max_len = max(tensor.shape[pad_dim] for tensor in tensor_list)
+        padded_tensors = []
+        for tensor in tensor_list:
+            padding_size = list(tensor.shape)
+            padding_size[pad_dim] = max_len - tensor.shape[pad_dim]
+            pad_tensor = torch.full(padding_size, pad_token_id, device=tensor.device)
+            padded_tensor = torch.cat([tensor, pad_tensor], dim=pad_dim)
+            padded_tensors.append(padded_tensor)
+
+        return torch.stack(padded_tensors)
 
     # Convert lists to padded tensors
-    all_sampled_outputs = convert_to_padded_tensor(all_sampled_outputs).to(args.device)
+    all_sampled_outputs = convert_to_padded_tensor(all_sampled_outputs, pad_dim=1).to(args.device)
     all_ground_truths = convert_to_padded_tensor(all_ground_truths).to(args.device)
 
     # Gather the tensors
@@ -123,7 +133,7 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, ge
         all_ground_truths = all_ground_truths.tolist()
         logger.info("Converted tensors back to lists on CPU. Continuing with decoding")
 
-        all_sampled_texts = [tokenizer.decode(sampled_output, skip_special_tokens=True) for sampled_output in all_sampled_outputs]
+        all_sampled_texts = [[tokenizer.decode(sampled_output, skip_special_tokens=True) for sampled_output in sampled_outputs] for sampled_outputs in all_sampled_outputs]
         all_ground_truths_text = [tokenizer.decode(ground_truth, skip_special_tokens=True) for ground_truth in all_ground_truths]
         logger.info("Finished decoding. Continuing with text stripping and writing the predictions.")
         
