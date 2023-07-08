@@ -176,8 +176,7 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
         if epoch == 0:
             # Save model checkpoint at least once if evaluation fails
             accelerator.wait_for_everyone()
-            if accelerator.is_main_process:
-                save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
+            save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
 
         # Evaluate at the end of each epoch
         results = evaluate(args, eval_dataset, model, run_batch_fn_eval, desc=str(global_step), accelerator=accelerator)
@@ -213,16 +212,17 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
 def save_model(args, output_dir, model, tokenizer, accelerator=None):
     """ Save model, tokenizer, and params to the output dir """
     os.makedirs(output_dir, exist_ok=True)
-    logger.info("Saving model checkpoint to %s", output_dir)
+    if accelerator.distributed_type == DistributedType.DEEPSPEED:
+        logger.info("Saving deepspeed model checkpoints to %s", output_dir)
+        model.save_checkpoint(output_dir)
     model = accelerator.unwrap_model(model)
 
-    # When Zero 3 is used we need to gater the truncated adapter bins from multiple GPUs for Lora compatibility
+    # When Zero 3 is used we need to gather the truncated adapter bins from multiple GPUs for Lora compatibility
     if accelerator.is_main_process:
+        logger.info("Saving model checkpoint to %s", output_dir)
         model.save_pretrained(output_dir)
-    if accelerator.distributed_type == DistributedType.DEEPSPEED:
-        model.save_checkpoint(output_dir)
-
-        if accelerator.is_main_process:
+        if accelerator.distributed_type == DistributedType.DEEPSPEED:
+            logger.info("Converting fp32 state dict weights %s", output_dir)
             state_dict = get_fp32_state_dict_from_zero_checkpoint(output_dir) # already on cpu
             if args.use_peft:
                 state_dict = get_peft_model_state_dict(model, state_dict=state_dict)
