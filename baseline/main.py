@@ -191,20 +191,34 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
 
         # Only save model if validation loss has improved
         accelerator.wait_for_everyone()
-        if accelerator.is_main_process:
+
+        save_happening = False
+        if accelerator.main_process:
             if results['val_measure'] < val_loss:
-                logger.info(f"Find a smaller val loss measure {results['val_measure']}")
+                logger.info(f"Found a smaller val loss measure {results['val_measure']}")
                 val_loss = results['val_measure']
+                save_happening = True
 
-                save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
+        if save_happening:
+            save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
 
-            else:
-                logger.info(f"The val loss measure {results['val_measure']} is larger than "
-                            f"the smallest val loss {val_loss}, continue to train ... ")
+        else:
+            logger.info(f"The val loss measure {results['val_measure']} is larger than "
+                        f"the smallest val loss {val_loss}, continue to train ... ")
 
     print_gpu_utilization(args, "after finishing the training")
     tb_writer.flush()
     tb_writer.close()
+
+    if accelerator.distributed_type == DistributedType.DEEPSPEED:
+        output_dir = args.output_dir
+        logger.info("Converting fp32 state dict weights %s", output_dir)
+        state_dict = get_fp32_state_dict_from_zero_checkpoint(output_dir) # already on cpu
+        if args.use_peft:
+            state_dict = get_peft_model_state_dict(model, state_dict=state_dict)
+            accelerator.save(state_dict, os.path.join(output_dir, "adapter_model.bin"))
+        else:
+            accelerator.save(state_dict, os.path.join(output_dir, "pytorch_model.bin"))
 
     return global_step, tr_loss / local_steps
 
@@ -214,23 +228,15 @@ def save_model(args, output_dir, model, tokenizer, accelerator=None):
     os.makedirs(output_dir, exist_ok=True)
     if accelerator.distributed_type == DistributedType.DEEPSPEED:
         logger.info("Saving deepspeed model checkpoints to %s", output_dir)
+        # When Zero 3 is used we need to gather the truncated adapter bins from multiple GPUs for Lora compatibility
         model.save_checkpoint(output_dir)
+        accelerator.wait_for_everyone()
     model = accelerator.unwrap_model(model)
 
-    # When Zero 3 is used we need to gather the truncated adapter bins from multiple GPUs for Lora compatibility
     if accelerator.is_main_process:
         logger.info("Saving model checkpoint to %s", output_dir)
         model.save_pretrained(output_dir)
-        if accelerator.distributed_type == DistributedType.DEEPSPEED:
-            logger.info("Converting fp32 state dict weights %s", output_dir)
-            state_dict = get_fp32_state_dict_from_zero_checkpoint(output_dir) # already on cpu
-            if args.use_peft:
-                state_dict = get_peft_model_state_dict(model, state_dict=state_dict)
-                accelerator.save(state_dict, os.path.join(output_dir, "adapter_model.bin"))
-            else:
-                accelerator.save(state_dict, os.path.join(output_dir, "pytorch_model.bin"))
 
-    if accelerator.is_main_process:
         tokenizer.save_pretrained(output_dir)
         accelerator.save(args, os.path.join(output_dir, "training_args.bin"))
         with open(os.path.join(output_dir, "params.json"), "w") as jsonfile:
