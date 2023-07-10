@@ -12,13 +12,12 @@ from peft import PeftModel
 import logging
 from accelerate import Accelerator
 from accelerate.utils import set_seed
-from torch.nn.utils.rnn import pad_sequence
 
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoConfig
-from .dataset import ResponseGenerationEvalDataset, ResponseGenerationDataset
+from .dataset import ResponseGenerationEvalDataset, ResponseGenerationDataset, SPECIAL_TOKENS, DEFAULT_PAD_TOKEN
 
 from .utils.argument import update_additional_params
 from .utils.model import run_batch_generation_sample
@@ -39,6 +38,21 @@ except ImportError:
 from accelerate.logging import get_logger
 
 logger = get_logger(__name__, log_level="INFO")
+
+
+def convert_to_padded_tensor(tensor_list, pad_dim=0, pad_token_id=-1, accelerator=None):
+    tensor_list = accelerator.pad_across_processes(tensor_list, dim=pad_dim, pad_index=pad_token_id)
+    logger.info(f"The padded tensor at this point has shape {[t.shape for t in tensor_list]}")
+    max_len = max(tensor.shape[pad_dim] for tensor in tensor_list)
+    padded_tensors = []
+    for tensor in tensor_list:
+        padding_size = list(tensor.shape)
+        padding_size[pad_dim] = max_len - tensor.shape[pad_dim]
+        pad_tensor = torch.full(padding_size, pad_token_id, device=tensor.device)
+        padded_tensor = torch.cat([tensor, pad_tensor], dim=pad_dim)
+        padded_tensors.append(padded_tensor)
+
+    return torch.stack(padded_tensors)
 
 
 def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, gen_task="seq2seq_lm") -> Dict:
@@ -97,28 +111,13 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, ge
 
     # wait for all processes to finish
     accelerator.wait_for_everyone()
-    pad_token_id = tokenizer.pad_token_id
 
     logger.info(f"The list of tensors for outputs has shape {[t.shape for t in all_sampled_outputs]}")
     logger.info(f"The list of tensors for gts has shape {[t.shape for t in all_ground_truths]}")
-    
-    def convert_to_padded_tensor(tensor_list, pad_dim=0):
-        tensor_list = accelerator.pad_across_processes(tensor_list, dim=pad_dim, pad_index=pad_token_id)
-        logger.info(f"The padded tensor at this point has shape {[t.shape for t in tensor_list]}")
-        max_len = max(tensor.shape[pad_dim] for tensor in tensor_list)
-        padded_tensors = []
-        for tensor in tensor_list:
-            padding_size = list(tensor.shape)
-            padding_size[pad_dim] = max_len - tensor.shape[pad_dim]
-            pad_tensor = torch.full(padding_size, pad_token_id, device=tensor.device)
-            padded_tensor = torch.cat([tensor, pad_tensor], dim=pad_dim)
-            padded_tensors.append(padded_tensor)
-
-        return torch.stack(padded_tensors)
 
     # Convert lists to padded tensors
-    all_sampled_outputs = convert_to_padded_tensor(all_sampled_outputs, pad_dim=1).to(args.device)
-    all_ground_truths = convert_to_padded_tensor(all_ground_truths).to(args.device)
+    all_sampled_outputs = convert_to_padded_tensor(all_sampled_outputs, pad_dim=1, pad_token_id=tokenizer.pad_token_id, accelerator=accelerator).to(args.device)
+    all_ground_truths = convert_to_padded_tensor(all_ground_truths, pad_token_id=tokenizer.pad_token_id, accelerator=accelerator).to(args.device)
 
     # Gather the tensors
     logger.info("Gathering results from all GPUs")
@@ -257,7 +256,6 @@ def main():
     else:
         model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
     model = model.to(args.device)
-    model.resize_token_embeddings(len(tokenizer))
     print_gpu_utilization(args, "after loading the model weights")
 
     # Evaluation

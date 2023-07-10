@@ -27,20 +27,6 @@ fi
 export ACCELERATE_HOME="baseline/configs/accelerate/"
 accelerate_config="${ACCELERATE_HOME}multi_gpu.yaml"
 
-# Set CUDA environments
-versions_cuda="11.6"
-versions_cudnn="8.4"
-
-export NCCL_DEBUG="INFO"
-export OMP_NUM_THREADS=12
-
-export CUDA_HOME="/usr/local/cuda-${versions_cuda}"
-export LD_LIBRARY_PATH="/usr/local/cudnn-11.X-v${versions_cudnn}/lib:/usr/local/cuda-${versions_cuda}/lib64:/usr/local/cuda-${versions_cuda}/extras/CUPTI/lib64"
-export HDF5_USE_FILE_LOCKING='FALSE'
-export PATH=$PATH:/u/nils.hilgers/py-dstc/bin
-
-
-
 # For one gpu we dont need mixed precision training but can fit up to 7B parameters using native fp16 weights
 # For multiple gpus we assume deepspeed which only supports mixed precision training, so note that mixed fp16 training is always enabled
 export ACCELERATE_MIXED_PRECISION="fp16"
@@ -60,8 +46,8 @@ params_file="baseline/configs/generation/${model_alias}_params.json"
 generation_params_file="baseline/configs/generation/generation_params.json"
 suffix=$(date +"%m%d%H%M%S")
 
-train_command="/u/nils.hilgers/py-dstc/bin/accelerate launch --config_file ${accelerate_config} --main_process_port=25678 --num_processes=${gpus} baseline.py --params_file ${params_file} --task generation --dataroot data --knowledge_file knowledge.json --exp_name rg-review-${model_alias}-${suffix} ${debug_flag} ${debug_fill}"
-eval_command="/u/nils.hilgers/py-dstc/bin/accelerate launch --config_file ${accelerate_config} --main_process_port=25679 --num_processes=${gpus} baseline.py --generate runs/rg-review-${model_alias}-${suffix} --generation_params_file ${generation_params_file} --task generation --dataroot data --eval_dataset val --labels_file data/val/labels.json --knowledge_file knowledge.json --output_file pred/val/rg.${model_alias}-${suffix}.json ${debug_flag} ${debug_fill}"
+train_command="singularity exec --nv --bind /work:/work runs/nlp_torch_sis.sif accelerate launch --config_file ${accelerate_config} --main_process_port=25678 --num_processes=${gpus} baseline.py --params_file ${params_file} --task generation --dataroot data --knowledge_file knowledge.json --exp_name rg-review-${model_alias}-${suffix} ${debug_flag} ${debug_fill}"
+eval_command="singularity exec --nv --bind /work:/work runs/nlp_torch_sis.sif accelerate launch --config_file ${accelerate_config} --main_process_port=25679 --num_processes=${gpus} baseline.py --generate runs/rg-review-${model_alias}-${suffix} --generation_params_file ${generation_params_file} --task generation --dataroot data --eval_dataset val --labels_file data/val/labels.json --knowledge_file knowledge.json --output_file pred/val/rg.${model_alias}-${suffix}.json ${debug_flag} ${debug_fill}"
 
 mkdir -p runs/rg-review-"${model_alias}-${suffix}"
 mkdir -p pred/val

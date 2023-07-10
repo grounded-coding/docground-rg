@@ -1,38 +1,38 @@
 {
   "dataset_args": {
     "history_max_utterances": 1000000,
-    "history_max_tokens": 256,
-    "knowledge_max_tokens": 256,
-    "gen_task": "seq2seq_lm"
+    "history_max_tokens": 512,
+    "knowledge_max_tokens": 512,
+    "gen_task": "causal_lm"
   },
 
-"peft_args": {
+  "peft_args": {
   "lora_r": 8,
   "lora_alpha": 32,
   "lora_dropout": 0.05,
-  "target_modules": ["q", "v"],
-  "modules_to_save": ["shared", "lm_head"]
+  "target_modules": ["q_proj", "v_proj"],
+  "modules_to_save": ["embed_tokens", "lm_head"]
   },
 
   "task": "generation",
-  "model_name_or_path": "t5-base",
+  "model_name_or_path": "huggyllama/llama-7b",
 
   "per_device_train_batch_size": 2,
   "per_device_eval_batch_size": 4,
-  "gradient_accumulation_steps": 4,
+  "gradient_accumulation_steps": 8,
   
   "learning_rate": 3e-5,
-  "adam_epsilon": 1e-8,
+  "adam_epsilon": 1e-4,
   "max_grad_norm": 1.0,
   "load_in_8bit": false,
   "use_peft": true,
-  "gradient_checkpointing": false,
+  "gradient_checkpointing": true,
 
   "num_train_epochs": 10,
   "warmup_steps": 0.2,
-  "special_tokens": false,
+"special_tokens": false,
 
-  "fp16": false,
+  "fp16": true,
 
   "seed": 42
 }

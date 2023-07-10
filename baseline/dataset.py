@@ -45,7 +45,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.dialogs = self._prepare_conversations()
         self.knowledge_reader = KnowledgeReader(self.dataroot, args.knowledge_file)
         self.snippets = self._prepare_knowledge()
-        if not hasattr(args, "prompting") or args.prompting not in ["alpaca", "oasst"]:
+        if not hasattr(args, "prompting") or args.prompting not in ["alpaca", "oasst", "vicuna"]:
             self.prompt, self.prompt_postfix = [], []
         else:
             self.prompt, self.prompt_postfix = self._prepare_prompt()
@@ -56,12 +56,16 @@ class BaseDataset(torch.utils.data.Dataset):
         base_prompt = ""
         if self.args.prompting == "oasst":
             base_prompt += "<|prompter|>"
+        elif self.args.prompting == "vicuna":
+            base_prompt += "USER: "
         base_prompt += "Below is a context with customer reviews and FAQs for hotels and restaurants, " \
                       "paired with a conversation between <speaker1> and <speaker2>. " \
                       "Answer the question from <speaker2> appropriately as <speaker1>.\n\n### Context:"        
         tokenized_prompt = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(base_prompt))
         if self.args.prompting == "alpaca":
             base_prompt_postfix = "\n\n### Response:"
+        elif self.args.prompting == "vicuna":
+            base_prompt_postfix = "\nASSISTANT:"
         elif self.args.prompting == "oasst":
             base_prompt_postfix = "<|endoftext|><|assistant|>"
         else:

@@ -6,6 +6,14 @@
     "gen_task": "seq2seq_lm"
   },
 
+"peft_args": {
+  "lora_r": 64,
+  "lora_alpha": 32,
+  "lora_dropout": 0.05,
+  "target_modules": ["q", "v"],
+  "modules_to_save": ["shared", "lm_head"]
+  },
+
   "task": "generation",
   "model_name_or_path": "t5-base",
 
@@ -17,7 +25,7 @@
   "adam_epsilon": 1e-8,
   "max_grad_norm": 1.0,
   "load_in_8bit": false,
-  "use_peft": false,
+  "use_peft": true,
   "gradient_checkpointing": false,
 
   "num_train_epochs": 10,

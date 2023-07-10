@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import json
+import shutil
 import inspect
 from typing import Dict, Tuple
 
@@ -172,9 +173,11 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
                     global_step += 1
                     local_steps += 1
                     epoch_iterator.set_postfix(Loss=tr_loss / local_steps)
+                    tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
+                    tb_writer.add_scalar("loss", tr_loss / local_steps, global_step)
 
         if epoch == 0:
-            # Save model checkpoint at least once if evaluation fails
+            # Save model checkpoint at least once
             accelerator.wait_for_everyone()
             save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
 
@@ -184,16 +187,12 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
         if accelerator.is_main_process:
             for key, value in results.items():
                 tb_writer.add_scalar("eval_{}".format(key), value, global_step)
-            tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
-            if local_steps == 0:
-                local_steps = 1
-            tb_writer.add_scalar("loss", tr_loss / local_steps, global_step)
 
         # Only save model if validation loss has improved
         accelerator.wait_for_everyone()
 
         save_happening = False
-        if accelerator.main_process:
+        if accelerator.is_main_process:
             if results['val_measure'] < val_loss:
                 logger.info(f"Found a smaller val loss measure {results['val_measure']}")
                 val_loss = results['val_measure']
@@ -203,8 +202,9 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
             save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
 
         else:
-            logger.info(f"The val loss measure {results['val_measure']} is larger than "
-                        f"the smallest val loss {val_loss}, continue to train ... ")
+            if accelerator.is_main_process:
+                logger.info(f"The val loss measure {results['val_measure']} is larger than "
+                            f"the smallest val loss {val_loss}, continue to train ... ")
 
     print_gpu_utilization(args, "after finishing the training")
     tb_writer.flush()
@@ -219,6 +219,10 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
             accelerator.save(state_dict, os.path.join(output_dir, "adapter_model.bin"))
         else:
             accelerator.save(state_dict, os.path.join(output_dir, "pytorch_model.bin"))
+        all_dirs = [d for d in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, d))]
+        for directory in all_dirs:
+            if directory.startswith("global_steps"):
+                shutil.rmtree(os.path.join(output_dir, directory))
 
     return global_step, tr_loss / local_steps
 
@@ -433,10 +437,15 @@ def main():
     args.params = params  # used for saving checkpoints
     set_default_params(args)
     dataset_args = Namespace(**args.dataset_args)
+
     set_default_dataset_params(dataset_args)
     dataset_args.task = args.task
     dataset_args.eval_only = args.eval_only
     dataset_args.debug = args.debug
+
+    peft_args = Namespace(**{})
+    if args.use_peft:
+        peft_args = Namespace(**args.peft_args)
 
     accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps)
     logging.basicConfig(
@@ -460,18 +469,15 @@ def main():
         if args.task == "generation":
             if dataset_args.gen_task in ["causal_lm"]:
                 lora_task_type = TaskType.CAUSAL_LM
-                if "pythia" in args.model_name_or_path:
-                    target_modules = ["query_key_value"]
-                else:
-                    target_modules = ["q_proj", "v_proj"]
             elif dataset_args.gen_task in ["seq2seq_lm"]:
                 lora_task_type = TaskType.SEQ_2_SEQ_LM
-                target_modules = ["q", "v"]
             else:
                 raise NotImplementedError()
             peft_config = LoraConfig(
-                task_type=lora_task_type, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1,
-                target_modules=target_modules
+                task_type=lora_task_type, inference_mode=False, r=peft_args.lora_r, lora_alpha=peft_args.lora_alpha,
+                lora_dropout=peft_args.lora_dropout,
+                target_modules=peft_args.target_modules,
+                modules_to_save=peft_args.modules_to_save
             )
         else:
             raise NotImplementedError("PEFT is only supported for generation task.")
@@ -482,6 +488,7 @@ def main():
 
     if args.eval_only:
         args.output_dir = args.checkpoint
+        tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
         if args.use_peft:
             model = model_class.from_pretrained(args.model_name_or_path, **model_load_kwargs)
             if args.load_in_8bit:
@@ -491,7 +498,7 @@ def main():
             model = model_class.from_pretrained(args.checkpoint, **model_load_kwargs)
 
         model = model.to(args.device)
-        tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
+
 
         # Evaluation
         eval_dataset = dataset_class(dataset_args, tokenizer, split_type=args.eval_dataset,
@@ -513,22 +520,32 @@ def main():
             config = AutoConfig.from_pretrained(args.model_name_or_path)
             logger.info(f"Loaded config class: {type(config)}")
             model = model_class.from_pretrained(args.model_name_or_path, config=config, **model_load_kwargs)
+            tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
+            logger.info(f"Loaded tokenizer: {type(tokenizer)}")
+
             if args.use_peft:
                 if args.gradient_checkpointing:
                     model.enable_input_require_grads()
                 model = get_peft_model(model, peft_config)
-            tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
-            logger.info(f"Loaded tokenizer: {type(tokenizer)}")
+
+            if args.special_tokens:
+                if tokenizer.pad_token is None:
+                    SPECIAL_TOKENS["pad_token"] = DEFAULT_PAD_TOKEN
+
+                smart_tokenizer_and_embedding_resize(
+                    special_tokens_dict=SPECIAL_TOKENS,
+                    tokenizer=tokenizer,
+                    model=model,
+                )
+            else:
+                if tokenizer.pad_token is None:
+                    tokenizer.pad_token_id = tokenizer.unk_token_id
+                if args.use_peft:
+                    args.use_peft.modules_to_save = []
+
             tokenizer.model_max_length = min(MAX_DESIRED_LENGTH, tokenizer.model_max_length)
+            logger.info(f"Tokenizer sequence length set to {min(MAX_DESIRED_LENGTH, tokenizer.model_max_length)}")
 
-            if tokenizer.pad_token is None:
-                SPECIAL_TOKENS["pad_token"] = DEFAULT_PAD_TOKEN
-
-            smart_tokenizer_and_embedding_resize(
-                special_tokens_dict=SPECIAL_TOKENS,
-                tokenizer=tokenizer,
-                model=model,
-            )
         model = model.to(args.device)
         print_gpu_utilization(args, "after loading the model weights")
 
