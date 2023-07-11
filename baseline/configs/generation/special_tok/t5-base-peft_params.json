@@ -7,7 +7,7 @@
   },
 
 "peft_args": {
-  "lora_r": 64,
+  "lora_r": 8,
   "lora_alpha": 32,
   "lora_dropout": 0.05,
   "target_modules": ["q", "v"],
@@ -30,7 +30,7 @@
 
   "num_train_epochs": 10,
   "warmup_steps": 0.2,
-"special_tokens": false,
+  "special_tokens": true,
 
   "fp16": false,
 

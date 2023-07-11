@@ -46,18 +46,19 @@ params_file="baseline/configs/generation/${model_alias}_params.json"
 generation_params_file="baseline/configs/generation/generation_params.json"
 suffix=$(date +"%m%d%H%M%S")
 
-train_command="singularity exec --nv --bind /work:/work runs/nlp_torch_sis.sif accelerate launch --config_file ${accelerate_config} --main_process_port=25678 --num_processes=${gpus} baseline.py --params_file ${params_file} --task generation --dataroot data --knowledge_file knowledge.json --exp_name rg-review-${model_alias}-${suffix} ${debug_flag} ${debug_fill}"
-eval_command="singularity exec --nv --bind /work:/work runs/nlp_torch_sis.sif accelerate launch --config_file ${accelerate_config} --main_process_port=25679 --num_processes=${gpus} baseline.py --generate runs/rg-review-${model_alias}-${suffix} --generation_params_file ${generation_params_file} --task generation --dataroot data --eval_dataset val --labels_file data/val/labels.json --knowledge_file knowledge.json --output_file pred/val/rg.${model_alias}-${suffix}.json ${debug_flag} ${debug_fill}"
+train_command="singularity exec --nv --bind /work:/work runs/nlp_torch_sis.sif accelerate launch --config_file ${accelerate_config} --main_process_port=25678 --num_processes=${gpus} baseline.py --params_file ${params_file} --task generation --dataroot data --knowledge_file knowledge.json --exp_name ${model_alias}-rg-review-${suffix} ${debug_flag} ${debug_fill}"
+eval_command="singularity exec --nv --bind /work:/work runs/nlp_torch_sis.sif accelerate launch --config_file ${accelerate_config} --main_process_port=25679 --num_processes=${gpus} baseline.py --generate runs/${model_alias}-rg-review-${suffix} --generation_params_file ${generation_params_file} --task generation --dataroot data --eval_dataset val --labels_file data/val/labels.json --knowledge_file knowledge.json --output_file pred/val/rg.${model_alias}-${suffix}.json ${debug_flag} ${debug_fill}"
 
-mkdir -p runs/rg-review-"${model_alias}-${suffix}"
+mkdir -p runs/"${model_alias}-rg-review-${suffix}"
 mkdir -p pred/val
+mkdir -p "tmp/special_tok"
 
 # Create the sbatch scripts dynamically
-cat << EOF > tmp/train_rg-review-"${model_alias}".sh
+cat << EOF > tmp/"${model_alias}"-train_rg-review.sh
 #!/bin/bash
 
-#SBATCH -o runs/rg-review-${model_alias}-${suffix}/train_job.out
-#SBATCH -e runs/rg-review-${model_alias}-${suffix}/train_job.err
+#SBATCH -o runs/${model_alias}-rg-review-${suffix}/train_job.out
+#SBATCH -e runs/${model_alias}-rg-review-${suffix}/train_job.err
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4
 #SBATCH --gres=gpu:${gpus}
@@ -69,7 +70,7 @@ cat << EOF > tmp/train_rg-review-"${model_alias}".sh
 ${train_command}
 EOF
 
-cat << EOF > tmp/eval_rg-review-"${model_alias}".sh
+cat << EOF > tmp/"${model_alias}"-eval_rg-review.sh
 #!/bin/bash
 
 #SBATCH -o runs/rg-review-${model_alias}-${suffix}/eval_job.out
@@ -87,8 +88,8 @@ EOF
 
 # Submit the first script and get its job ID
 
-output=$(sbatch tmp/train_rg-review-"${model_alias}".sh | tee /dev/fd/2)
+output=$(sbatch tmp/"${model_alias}"-train_rg-review.sh | tee /dev/fd/2)
 jobid=$(echo "$output" | awk '{print $4}')
 
 # Submit the second script, making it dependent on the first
-sbatch --dependency=afterok:"$jobid" tmp/eval_rg-review-"${model_alias}".sh
+sbatch --dependency=afterok:"$jobid" tmp/"${model_alias}"-eval_rg-review.sh

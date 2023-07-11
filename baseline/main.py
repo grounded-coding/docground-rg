@@ -523,11 +523,6 @@ def main():
             tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
             logger.info(f"Loaded tokenizer: {type(tokenizer)}")
 
-            if args.use_peft:
-                if args.gradient_checkpointing:
-                    model.enable_input_require_grads()
-                model = get_peft_model(model, peft_config)
-
             if args.special_tokens:
                 if tokenizer.pad_token is None:
                     SPECIAL_TOKENS["pad_token"] = DEFAULT_PAD_TOKEN
@@ -537,6 +532,12 @@ def main():
                     tokenizer=tokenizer,
                     model=model,
                 )
+
+            if args.use_peft:
+                if args.gradient_checkpointing:
+                    model.enable_input_require_grads()
+                model = get_peft_model(model, peft_config)
+
             else:
                 if tokenizer.pad_token is None:
                     tokenizer.pad_token_id = tokenizer.unk_token_id
