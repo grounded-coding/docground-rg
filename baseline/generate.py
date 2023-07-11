@@ -43,7 +43,7 @@ logger = get_logger(__name__, log_level="INFO")
 
 def convert_to_padded_tensor(tensor_list, pad_dim=0, pad_token_id=-1, accelerator=None):
     tensor_list = accelerator.pad_across_processes(tensor_list, dim=pad_dim, pad_index=pad_token_id)
-    logger.info(f"The padded tensor at this point has shape {[t.shape for t in tensor_list]}")
+    logger.debug(f"The padded tensor at this point has shape {[t.shape for t in tensor_list]}")
     max_len = max(tensor.shape[pad_dim] for tensor in tensor_list)
     padded_tensors = []
     for tensor in tensor_list:
