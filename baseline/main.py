@@ -457,7 +457,7 @@ def main():
     set_seed(args.seed)
     dataset_class, model_class, run_batch_fn_train, run_batch_fn_eval = get_classes(args)
 
-    model_load_kwargs = {"torch_dtype": args.torch_dtype, "low_cpu_mem_usage": accelerator.distributed_type != DistributedType.DEEPSPEED}
+    model_load_kwargs = {"torch_dtype": args.torch_dtype, "low_cpu_mem_usage": accelerator.distributed_type != DistributedType.DEEPSPEED and "bart" not in args.model_name_or_path}
     if args.load_in_8bit:
         model_load_kwargs["device_map"] = "auto"
         model_load_kwargs["load_in_8bit"] = True
@@ -540,8 +540,6 @@ def main():
             else:
                 if tokenizer.pad_token is None:
                     tokenizer.pad_token_id = tokenizer.unk_token_id
-                if args.use_peft:
-                    args.use_peft.modules_to_save = []
 
             tokenizer.model_max_length = min(MAX_DESIRED_LENGTH, tokenizer.model_max_length)
             logger.info(f"Tokenizer sequence length set to {min(MAX_DESIRED_LENGTH, tokenizer.model_max_length)}")
