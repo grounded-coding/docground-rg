@@ -1,0 +1,17 @@
+{
+    "train_micro_batch_size_per_gpu": "auto",
+    "train_batch_size": "auto",
+    "fp16": {
+        "enabled": "auto"
+    },
+    "zero_optimization": {
+        "stage": 3
+    },
+    "activation_checkpointing": {
+        "partition_activations": true,
+        "cpu_checkpointing": false,
+        "contiguous_memory_optimization": false,
+        "synchronize_checkpoint_boundary": false,
+        "profile": true
+        }
+    }
