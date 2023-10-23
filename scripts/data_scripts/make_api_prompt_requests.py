@@ -14,21 +14,21 @@ from scripts.data_scripts.get_prompts import get_prompt
 responses = []
 num_requests = 4173
 num_threads = 16
-file_name = "rg.review_llama2-70b-chat_zero_shot_val.json"
+file_name = "rg.review_wizardlm1-7b_zero_shot_val.json"
 # openai.api_key = os.environ["OPENAI_API_KEY"]
 
-
-# Your dataset with lists of inputs
 dataset = "val"
 
 responses = []
 
-prompt_llama_str = "[INST] <<SYS>> Below is a context with customer reviews and FAQs for hotels and restaurants, paired with a conversation between Assistant and User. Answer the question from User appropriately as Assistant. <</SYS>> {} [/INST] Assistant:"
+prompt_llama2_str = "[INST] <<SYS>> Below is a context with customer reviews and FAQs for hotels and restaurants, paired with a conversation between Assistant and User. Answer the question from User appropriately as Assistant. <</SYS>> {} [/INST] Assistant:"
+wizardlm_str = "Below is a context with customer reviews and FAQs for hotels and restaurants, paired with a conversation between Assistant and User. Answer the question from User appropriately as Assistant.\n\n{}\n\n### Response: Assistant:"
+prompt_llama1_str = "Below is a context with customer reviews and FAQs for hotels and restaurants, paired with a conversation between Assistant and User. Answer the question from User appropriately as Assistant.\n\n{} Assistant:"
 
-def prompt_llama(input, url='http://gpu-19.apptek.local:8080/generate'):
+def prompt_llama(input, url='http://gpu-19.apptek.local:8090/generate'):
     data = {}
     data["parameters"] = {  "do_sample": True, "min_new_tokens": 5, "max_new_tokens": 150, "num_beams": 5}
-    data["inputs"] = prompt_llama_str.format(input)
+    data["inputs"] = wizardlm_str.format(input)
 
     headers = {
     'Content-Type': 'application/json'
