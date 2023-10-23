@@ -4,3 +4,4 @@ runs/
 *.log
 *.err
 __pycache__
+figures/
