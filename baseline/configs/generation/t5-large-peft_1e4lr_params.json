@@ -12,7 +12,7 @@
   "lora_alpha": 32,
   "lora_dropout": 0.05,
   "target_modules": ["q", "v"],
-  "modules_to_save": []
+  "modules_to_save": ["shared", "lm_head"]
   },
 
   "task": "generation",
@@ -22,7 +22,7 @@
   "per_device_eval_batch_size": 4,
   "gradient_accumulation_steps": 4,
   
-  "learning_rate": 3e-5,
+  "learning_rate": 1e-4,
   "adam_epsilon": 1e-8,
   "max_grad_norm": 1.0,
   "load_in_8bit": false,
