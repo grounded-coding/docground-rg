@@ -68,6 +68,20 @@ os.environ['TRANSFORMERS_OFFLINE'] = '1'
 MAX_DESIRED_LENGTH = int(os.getenv('MAX_DESIRED_LEN', 1024))
 
 
+def find_all_linear_names(args, model):
+    cls = torch.nn.Linear
+    lora_module_names = set()
+    for name, module in model.named_modules():
+        if isinstance(module, cls):
+            names = name.split('.')
+            lora_module_names.add(names[0] if len(names) == 1 else names[-1])
+
+
+    if 'lm_head' in lora_module_names: # needed for 16-bit
+        lora_module_names.remove('lm_head')
+    return list(lora_module_names)
+
+
 def get_cls_report(y_true, y_pred):
     """ Get the report of precision, recall, and f1-score for a classification output """
     return {"precision": precision_score(y_true, y_pred, average=None, zero_division=0)[1],
@@ -156,6 +170,12 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
     set_seed(args.seed)  # for reproducibility
     val_loss = float('inf')
 
+    # Calculate perplexity of base model
+    results = evaluate(args, eval_dataset, model, run_batch_fn_eval, desc=str(global_step), accelerator=accelerator)
+    if accelerator.is_main_process:
+        for key, value in results.items():
+            tb_writer.add_scalar("eval_{}".format(key), value, global_step)
+
     for epoch in train_iterator:
         local_steps = 0  # update step
         tr_loss = 0.0
@@ -181,6 +201,7 @@ def train(args, train_dataset, eval_dataset, model: PreTrainedModel, tokenizer: 
             # Save model checkpoint at least once
             accelerator.wait_for_everyone()
             save_model(args, args.output_dir, model, tokenizer, accelerator=accelerator)
+
 
         # Evaluate at the end of each epoch
         results = evaluate(args, eval_dataset, model, run_batch_fn_eval, desc=str(global_step), accelerator=accelerator)
@@ -474,12 +495,14 @@ def main():
                 lora_task_type = TaskType.SEQ_2_SEQ_LM
             else:
                 raise NotImplementedError()
+            if peft_args.target_modules == "linear":
+                peft_args.target_modules = find_all_linear_names(args, model_class.from_pretrained(args.model_name_or_path, **model_load_kwargs))
             peft_config = LoraConfig(
-                task_type=lora_task_type, inference_mode=False, r=peft_args.lora_r, lora_alpha=peft_args.lora_alpha,
-                lora_dropout=peft_args.lora_dropout,
-                target_modules=peft_args.target_modules,
-                modules_to_save=peft_args.modules_to_save
-            )
+                    task_type=lora_task_type, inference_mode=False, r=peft_args.lora_r, lora_alpha=peft_args.lora_alpha,
+                    lora_dropout=peft_args.lora_dropout,
+                    target_modules=peft_args.target_modules,
+                    modules_to_save=peft_args.modules_to_save
+                )
         else:
             raise NotImplementedError("PEFT is only supported for generation task.")
         
