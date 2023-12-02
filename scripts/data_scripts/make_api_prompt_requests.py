@@ -21,6 +21,9 @@ dataset = "val"
 
 responses = []
 
+original_str = "[INST] <<SYS>> You are a helpful assistant who can make bookings and reservations. You are provided with a context and must only use the context to answer the users. The context is related to the provided hotel or restaurant names. Context can be reviews from customers or FAQs. FAQs start after token :F: and each new review starts after token :R:. If the context info is not sufficient or contradictory, inform the user.<</SYS>> {}\n\n## Task\nNow give a concise answer as assistant.[/INST]Assistant:"
+
+
 prompt_llama2_str = "[INST] <<SYS>> Below is a context with customer reviews and FAQs for hotels and restaurants, paired with a conversation between Assistant and User. Answer the question from User appropriately as Assistant. <</SYS>> {} [/INST] Assistant:"
 wizardlm_str = "Below is a context with customer reviews and FAQs for hotels and restaurants, paired with a conversation between Assistant and User. Answer the question from User appropriately as Assistant.\n\n{}\n\n### Response: Assistant:"
 prompt_llama1_str = "Below is a context with customer reviews and FAQs for hotels and restaurants, paired with a conversation between Assistant and User. Answer the question from User appropriately as Assistant.\n\n{} Assistant:"
