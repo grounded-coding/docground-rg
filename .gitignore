@@ -5,3 +5,5 @@ runs/
 *.err
 __pycache__
 figures/
+16fp_runs/
+trafocache
