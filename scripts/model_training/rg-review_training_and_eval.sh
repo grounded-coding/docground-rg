@@ -72,35 +72,35 @@ EOF
 if command -v sbatch &>/dev/null; then
   # Create the sbatch scripts dynamically
   cat << EOF > tmp/"${model_alias}"-train_rg-review.sh
-  #!/bin/bash
+#!/bin/bash
 
-  #SBATCH -o runs/${model_alias}-rg-review-${suffix}/train_job.out
-  #SBATCH -e runs/${model_alias}-rg-review-${suffix}/train_job.err
-  #SBATCH --nodes=1
-  #SBATCH --ntasks-per-node=4
-  #SBATCH --gres=gpu:${gpus}
-  #SBATCH --time=168:00:00
-  #SBATCH -p ${partition}
-  #SBATCH --mem=${cpu_mem}G
-  #SBATCH --chdir=/u/nils.hilgers/setups/dstc11-track5
+#SBATCH -o runs/${model_alias}-rg-review-${suffix}/train_job.out
+#SBATCH -e runs/${model_alias}-rg-review-${suffix}/train_job.err
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=4
+#SBATCH --gres=gpu:${gpus}
+#SBATCH --time=168:00:00
+#SBATCH -p ${partition}
+#SBATCH --mem=${cpu_mem}G
+#SBATCH --chdir=/home/nhilgers/setups/dstc11-track5
 
-  ${train_command}
+${train_command}
 EOF
 
   cat << EOF > tmp/"${model_alias}"-eval_rg-review.sh
-  #!/bin/bash
+#!/bin/bash
 
-  #SBATCH -o runs/${model_alias}-rg-review-${suffix}/eval_job.out
-  #SBATCH -e runs/${model_alias}-rg-review-${suffix}/eval_job.err
-  #SBATCH --nodes=1
-  #SBATCH --ntasks-per-node=4
-  #SBATCH --gres=gpu:${gpus}
-  #SBATCH --time=168:00:00
-  #SBATCH -p ${partition}
-  #SBATCH --mem=${cpu_mem}G
-  #SBATCH --chdir=/u/nils.hilgers/setups/dstc11-track5
+#SBATCH -o runs/${model_alias}-rg-review-${suffix}/eval_job.out
+#SBATCH -e runs/${model_alias}-rg-review-${suffix}/eval_job.err
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=4
+#SBATCH --gres=gpu:${gpus}
+#SBATCH --time=168:00:00
+#SBATCH -p ${partition}
+#SBATCH --mem=${cpu_mem}G
+#SBATCH --chdir=/home/nhilgers/setups/dstc11-track5
 
-  ${eval_command}
+${eval_command}
 EOF
 
   # Submit the first script and get its job ID
