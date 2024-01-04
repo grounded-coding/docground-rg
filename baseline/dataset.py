@@ -17,7 +17,7 @@ from accelerate.logging import get_logger
 logger = get_logger(__name__, log_level="INFO")
 
 SPECIAL_TOKENS = {
-    "additional_special_tokens": ["Assistant:", "User:", "Document:", "Conversation:"],
+    "additional_special_tokens": ["Assistant:", "User:", ":Doc:", "\n\n ## Conversation\n"],
 }
 IGNORE_INDEX = -100
 DEFAULT_PAD_TOKEN = "[PAD]"
@@ -42,7 +42,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 return [x]
             else:
                 return x
-        self.speaker1, self.speaker2, self.knowledge_sep, self.knowledge_tag = [list_conv(self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(x))) for x in self.SPECIAL_TOKENS["additional_special_tokens"]]
+        self.speaker1, self.speaker2, self.knowledge_sep, self.conv_start = [list_conv(self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(x))) for x in self.SPECIAL_TOKENS["additional_special_tokens"]]
 
         self.knowledge_sep_token = self.SPECIAL_TOKENS["additional_special_tokens"][2]
         self.dataset_walker = DatasetWalker(split_type, labels=labels, dataroot=self.dataroot, labels_file=labels_file)
@@ -62,16 +62,14 @@ class BaseDataset(torch.utils.data.Dataset):
             base_prompt += "<|prompter|>"
         elif self.args.prompting == "vicuna":
             base_prompt += "USER: "
-        base_prompt += "Below is a context with customer reviews and FAQs for hotels and restaurants, " \
-                      "paired with a conversation between Assistant and User. " \
-                      "Answer the question from User appropriately as Assistant.\n\n"        
+        base_prompt += "You are a helpful Assistant who can make bookings and reservations. Below is a context with customer reviews and FAQs for hotels and restaurants, paired with a conversation between Assistant and User. If the context info is not sufficient or contradictory, inform User.\n\n"        
         tokenized_prompt = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(base_prompt))
         if self.args.prompting == "alpaca":
-            base_prompt_postfix = "\n\n### Response:"
+            base_prompt_postfix = "\n\n## Task\nNow give a concise answer as Assistant.\n\n### Response:"
         elif self.args.prompting == "vicuna":
-            base_prompt_postfix = "\nASSISTANT:"
+            base_prompt_postfix = "\n\n## Task\nNow give a concise answer as Assistant.\nASSISTANT:"
         elif self.args.prompting == "oasst":
-            base_prompt_postfix = "<|endoftext|><|assistant|>"
+            base_prompt_postfix = "\n\n## Task\nNow give a concise answer as Assistant.<|endoftext|><|assistant|>"
         else:
             raise NotImplementedError()
         tokenized_prompt_postfix = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(base_prompt_postfix))
@@ -500,12 +498,12 @@ class ResponseGenerationDataset(BaseDataset):
         else:
             if self.args.gen_task.lower() == "seq2seq_lm":
                 if 't5' in str(type(self.tokenizer)):
-                    sequence = [sequence[0]] + [self.knowledge_tag]  + [history] + [[self.eos]]
+                    sequence = [sequence[0]] + [self.conv_start]  + [history] + [[self.eos]]
                     instance["input_ids"] = list(chain(*sequence))
                     instance["lm_labels"] = sequence_with_speaker[-1] + [self.eos]
                     # else we assume BART architecture with both BOS and EOS
                 else:
-                    sequence = [[self.bos]] + [sequence[0]] + [self.knowledge_tag] + [history] + [[self.eos]]
+                    sequence = [[self.bos]] + [sequence[0]] + [self.conv_start] + [history] + [[self.eos]]
                     instance["input_ids"] = list(chain(*sequence))
                     instance["lm_labels"] = [self.bos] + sequence_with_speaker[-1] + [self.eos]
             # For causal LM, we have to copy the input_ids to lm_labels
@@ -516,7 +514,7 @@ class ResponseGenerationDataset(BaseDataset):
                 else:
                     end_of_sequence = [sequence_with_speaker[-1]] + [[self.eos]]
                 end_len = len(list(chain(*end_of_sequence)))
-                sequence = [prompt] + [sequence[0]] + [self.knowledge_tag] + [history] + [prompt_postfix] + end_of_sequence
+                sequence = [prompt] + [sequence[0]] + [self.conv_start] + [history] + [prompt_postfix] + end_of_sequence
                 
                 instance["input_ids"] = list(chain(*sequence))
                 labels = copy.deepcopy(instance["input_ids"])

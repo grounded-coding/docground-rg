@@ -116,7 +116,36 @@ EOF
 
   # Submit the second script, making it dependent on the first
   sbatch --dependency=afterok:"$jobid" tmp/"${model_alias}"-eval_rg-review.sh
+
 else
     create_script_file "runs/${model_alias}-rg-review-${suffix}/train_job.sh" "${train_command} > runs/${model_alias}-rg-review-${suffix}/train_job.out 2> runs/${model_alias}-rg-review-${suffix}/train_job.err"
     create_script_file "runs/${model_alias}-rg-review-${suffix}/eval_job.sh" "${eval_command} > runs/${model_alias}-rg-review-${suffix}/eval_job.out 2> runs/${model_alias}-rg-review-${suffix}/eval_job.err"
+fi
+
+
+if [ "$gpus" -le 1 ]
+then
+    gpu_status=$(nvidia-smi)
+
+    # Initialize CUDA_VISIBLE_DEVICES as empty
+    export CUDA_VISIBLE_DEVICES=
+
+    # Loop through each GPU and check if there are any processes running on it
+    for gpu_id in {0..9}; do
+        # Check if the GPU is listed in nvidia-smi output
+        if echo "$gpu_status" | grep -q " ${gpu_id}  NVIDIA "; then
+            # Check if there are no processes running on this GPU
+            if ! echo "$gpu_status" | grep -q "|    ${gpu_id}  "; then
+                # If no processes are found, set CUDA_VISIBLE_DEVICES to this GPU and break the loop
+                export CUDA_VISIBLE_DEVICES=$gpu_id
+                break
+            fi
+        fi
+    done
+    echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
+
+
+    # Run the first script
+    bash "runs/${model_alias}-rg-review-${suffix}/train_job.sh"
+    bash "runs/${model_alias}-rg-review-${suffix}/eval_job.sh"
 fi

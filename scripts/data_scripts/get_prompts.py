@@ -73,9 +73,9 @@ def get_prompt(id, label_print=False, split="val", max_turns=None, max_n_sent=No
                 # STYLE
             if doc_id != current_doc_id:
                 if doc_type != "faqs":
-                    sentences.append(f":R: ({entity_name})")
+                    sentences.append(f":Doc: ({entity_name})")
                 else:
-                    sentences.append(f":F: ({entity_name})")
+                    sentences.append(f":Doc: ({entity_name})")
             current_doc_id = doc_id
             current_entity_id = entity_id
 
