@@ -8,6 +8,7 @@ cpu_mem=${4:-24}  # default to 24 if not specified
 max_desired_len=${5:-1024}
 debug_level=$6
 debug_fill=$7
+eval_split=${8:-val}
 
 # Check if a model alias argument is provided
 if [ -z "$1" ]
@@ -29,15 +30,19 @@ then
 fi
 
 acc_home="baseline/configs/accelerate/"
+# default config uses multi gpu
 accelerate_config="${acc_home}multi_gpu.yaml"
 
-# For one gpu we dont need mixed precision training but can fit up to 7B parameters using native fp16 weights
-# For multiple gpus we assume deepspeed which only supports mixed precision training, so note that mixed fp16 training is always enabled
-acc_mp="fp16"
+acc_mp="no"
+# if model_alias contains peft use bf16
+if [[ "$model_alias" == *"peft"* ]]
+then
+  acc_mp="bf16"
+fi
+
 if [ "$gpus" -le 1 ]
 then
   accelerate_config="${acc_home}single_gpu.yaml"
-  acc_mp="no"
 fi
 
 debug_flag=""
@@ -51,12 +56,13 @@ generation_params_file="baseline/configs/generation/generation_params.json"
 suffix=$(date +"%m%d%H%M%S")
 
 train_command="export MAX_DESIRED_LEN=${max_desired_len}; export ACCELERATE_MIXED_PRECISION=${acc_mp}; singularity exec --nv${binds} runs/nlp_torch_sis.sif accelerate launch --config_file ${accelerate_config} --main_process_port=25678 --num_processes=${gpus} baseline.py --params_file ${params_file} --task generation --dataroot data --knowledge_file knowledge.json --exp_name ${model_alias}-rg-review-${suffix} ${debug_flag} ${debug_fill}"
-eval_command="export MAX_DESIRED_LEN=${max_desired_len}; export ACCELERATE_MIXED_PRECISION=${acc_mp}; singularity exec --nv${binds} runs/nlp_torch_sis.sif accelerate launch --config_file ${accelerate_config} --main_process_port=25679 --num_processes=${gpus} baseline.py --generate runs/${model_alias}-rg-review-${suffix} --generation_params_file ${generation_params_file} --task generation --dataroot data --eval_dataset val --labels_file data/val/labels.json --knowledge_file knowledge.json --output_file pred/val/rg.${model_alias}-${suffix}.json ${debug_flag} ${debug_fill}"
+eval_command="export MAX_DESIRED_LEN=${max_desired_len}; export ACCELERATE_MIXED_PRECISION=${acc_mp}; singularity exec --nv${binds} runs/nlp_torch_sis.sif accelerate launch --config_file ${accelerate_config} --main_process_port=25679 --num_processes=${gpus} baseline.py --generate runs/${model_alias}-rg-review-${suffix} --generation_params_file ${generation_params_file} --task generation --dataroot data --eval_dataset ${eval_split} --labels_file data/${eval_split}/labels.json --knowledge_file knowledge.json --output_file pred/${eval_split}/rg.${model_alias}-${suffix}.json ${debug_flag} ${debug_fill}"
 
 mkdir -p runs/"${model_alias}-rg-review-${suffix}"
-mkdir -p pred/val/rg.special_tok
-mkdir -p pred/test/rg.special_tok
-mkdir -p tmp/special_tok
+
+# create all directories by extracting from model_alias the folder names before last /
+mkdir -p pred/${eval_split}/"${model_alias}"-b
+mkdir -p tmp/"${model_alias}"-b
 
 create_script_file() {
     local script_file=$1
