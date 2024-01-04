@@ -469,7 +469,7 @@ def main():
     if args.use_peft:
         peft_args = Namespace(**args.peft_args)
 
-    accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps, mixed_precision="bf16")
+    accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps)
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d : %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
