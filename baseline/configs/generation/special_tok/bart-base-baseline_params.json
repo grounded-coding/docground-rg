@@ -23,8 +23,8 @@
 
   "num_train_epochs": 10,
   "warmup_steps": 0.2,
-"special_tokens": true,
-    "smart_init": false,
+  "special_tokens": true,
+  "smart_init": false,
 
   "fp16": false,
 
