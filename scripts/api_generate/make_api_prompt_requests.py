@@ -80,13 +80,19 @@ if __name__ == "__main__":
     out_path = create_output_structure(dataset, model)
 
     responses = []
-    num_threads = 2
+    num_threads = 8
 
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
-        futures = [executor.submit(process_request, dataset, i, model, client) for i in range(10)]
+        futures = [executor.submit(process_request, dataset, i, model, client) for i in range(dataset.dataset_len)]
+        # regularly save in case of crash
         for i, future in enumerate(as_completed(futures)):
+
             responses.append(future.result())
             print("Response saved.\n------------------")
+            if i % 50 == 0:
+                with open(out_path, 'w') as file:
+                    responses = sorted(responses, key=lambda resp: resp["id"])
+                    json.dump(responses, file)
 
     with open(out_path, 'w') as file:
         responses = sorted(responses, key=lambda resp: resp["id"])

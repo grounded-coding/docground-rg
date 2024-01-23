@@ -1,5 +1,4 @@
 python-dotenv
-openai
 accelerate
 git+https://github.com/nils-hde/LLEval.git
 git+https://github.com/nils-hde/UniEval.git
