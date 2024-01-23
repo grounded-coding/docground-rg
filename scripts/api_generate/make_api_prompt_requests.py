@@ -58,7 +58,7 @@ def prompt_openai(context, model, client):
 
 
 def process_request(dataset, i, model, client):
-    context, target = get_prompt(i, False, dataset=dataset.dataset, max_turns=None, max_n_sent=None, split=dataset.dataset_split,
+    context, target = get_prompt(i, False, dataset=dataset.dataset, split=dataset.dataset_split,
                                  max_input_tokens=1024)
     if not target:
         return {"target": False, "id": i}

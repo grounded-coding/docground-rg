@@ -2,7 +2,40 @@ import json
 from itertools import groupby
 from operator import itemgetter
 
-def get_prompt(id, label_print=False, split="val", max_turns=None, max_n_sent=None, dataset="data", max_input_tokens=None):
+def truncate_output(knowledge_text, conversation_text, max_tokens=1024, char_per_token=4):
+    entire_input_len = max_tokens * char_per_token
+
+    # Calculate the length of knowledge text and conversation text
+    entire_knowledge_len = len(knowledge_text)
+    entire_history_len = len(conversation_text)
+
+    # Calculate maximum length allowed for each
+    max_conversation_length = int((entire_history_len * entire_input_len) / (entire_knowledge_len + entire_history_len))
+    max_conversation_length = min(entire_history_len + entire_history_len, 512 * 4)
+    max_knowledge_length = entire_input_len - max_conversation_length
+
+    # Truncate knowledge text and conversation text if necessary
+    if max_knowledge_length < entire_knowledge_len:
+        truncated_knowledge = knowledge_text[:max_knowledge_length].rsplit(' ', 1)[0]
+    else:
+        truncated_knowledge = knowledge_text
+
+    # Truncate from the start of the conversation text if necessary
+    remaining_chars_for_conversation = len(conversation_text) - max_conversation_length
+    if remaining_chars_for_conversation > 0:
+        truncated_conversation = conversation_text[remaining_chars_for_conversation:].lstrip()
+    else:
+        truncated_conversation = conversation_text
+
+    # Combine truncated parts into final output
+    truncated_output = truncated_knowledge
+    if truncated_conversation:
+        truncated_output += '\n\n ## Conversation\n' + truncated_conversation
+
+    return truncated_output
+
+
+def get_prompt(id, label_print=False, split="val", max_turns=10000, max_n_sent=10000, dataset="data", max_input_tokens=None):
 
     with open(f'{dataset}/{split}/knowledge.json', encoding="utf-8") as f:
         knowledge = json.load(f)
@@ -43,14 +76,14 @@ def get_prompt(id, label_print=False, split="val", max_turns=None, max_n_sent=No
     for key, group in groupby(cur_knowledge_set, key=itemgetter('entity_id', 'doc_type', 'doc_id')):
         grouped_data.append(list(group))
 
-    for info_sentence_set in grouped_data:
-        for sentence in info_sentence_set:
-            domain = sentence['domain']
-            entity_id = str(sentence['entity_id'])
-            doc_id = str(sentence['doc_id'])
-            doc_type = str(sentence["doc_type"]) + "s"
+    for knowledge_snippet_set in grouped_data:
+        for snippet in knowledge_snippet_set:
+            domain = snippet['domain']
+            entity_id = str(snippet['entity_id'])
+            doc_id = str(snippet['doc_id'])
+            doc_type = str(snippet["doc_type"]) + "s"
             if doc_type != "faqs":
-                sent_id = str(sentence['sent_id'])
+                sent_id = str(snippet['sent_id'])
 
             if doc_type != "faqs":
                 text = knowledge[domain][entity_id][doc_type][doc_id]['sentences'][sent_id]
@@ -63,7 +96,7 @@ def get_prompt(id, label_print=False, split="val", max_turns=None, max_n_sent=No
                 doc_type = "faqs"
             entity_name = str(knowledge[domain][entity_id]['name'])
             
-            if max_n_sent is not None and n_sent + 1 > max_n_sent:
+            if n_sent + 1 > max_n_sent:
                 break
             n_sent += 1
 
@@ -87,17 +120,16 @@ def get_prompt(id, label_print=False, split="val", max_turns=None, max_n_sent=No
         elif log['speaker'] == 'S':
             selected_turns.append("Assistant: " + log['text'])
         n_turns += 1
-        if max_turns is not None and n_turns + 1 > max_turns:
+        if n_turns + 1 > max_turns:
             break
 
     # Get the label
     label = labels[id]['response']
     if label_print:
         selected_turns.append(f":S: {label}")
-    output = ""
-    if max_n_sent > 0:
-        output += ' '.join(sentences)
-    if max_turns > 0:
-        output += '\n\n ## Conversation\n' + ' '.join(selected_turns)
 
+    knowledge_text = ' '.join(sentences) if max_n_sent > 0 else ""
+    conversation_text = ' '.join(selected_turns) if max_turns > 0 else ""
+
+    output = truncate_output(knowledge_text, conversation_text, max_tokens=max_input_tokens)
     return output, True
