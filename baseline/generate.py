@@ -27,6 +27,7 @@ from .utils.metrics import (
     DataCacheMetric,
     UnigramMetric, NGramDiversity,
     CorpusNGramDiversity,
+    LENGTH,
     BLEU, METEOR, ROUGE,
     print_gpu_utilization
 )
@@ -89,6 +90,7 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, ge
         BLEU(),
         ROUGE(),
         METEOR(),
+        LENGTH()
     ]
 
     args.tokenizer = tokenizer

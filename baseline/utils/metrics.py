@@ -234,7 +234,7 @@ class LENGTH(DataCacheMetric):
 
     def update(self, output):
         hypothesis, _ = output
-        self._len.append(len(hypothesis.split()))
+        self._len.append(len(hypothesis))
 
     def compute(self):
         if len(self._len) == 0:
