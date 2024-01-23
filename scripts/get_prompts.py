@@ -2,7 +2,7 @@ import json
 from itertools import groupby
 from operator import itemgetter
 
-def get_prompt(id, label_print=False, split="val", max_turns=None, max_n_sent=None, dataset="data"):
+def get_prompt(id, label_print=False, split="val", max_turns=None, max_n_sent=None, dataset="data", max_input_tokens=None):
 
     with open(f'{dataset}/{split}/knowledge.json', encoding="utf-8") as f:
         knowledge = json.load(f)
@@ -20,7 +20,6 @@ def get_prompt(id, label_print=False, split="val", max_turns=None, max_n_sent=No
     # Generate sentences from knowledge.json
     sentences = []
     current_doc_id = None
-    current_entity_id = None
     dstc9_map = False
     n_sent = 0
 
@@ -68,16 +67,12 @@ def get_prompt(id, label_print=False, split="val", max_turns=None, max_n_sent=No
                 break
             n_sent += 1
 
-            # Add a separator if this is a new document
-            #if entity_id != current_entity_id:
-                # STYLE
             if doc_id != current_doc_id:
                 if doc_type != "faqs":
                     sentences.append(f":Doc: ({entity_name})")
                 else:
                     sentences.append(f":Doc: ({entity_name})")
             current_doc_id = doc_id
-            current_entity_id = entity_id
 
             sentences.append(text)
 
@@ -101,8 +96,8 @@ def get_prompt(id, label_print=False, split="val", max_turns=None, max_n_sent=No
         selected_turns.append(f":S: {label}")
     output = ""
     if max_n_sent > 0:
-        output += '## Context\n' + ' '.join(sentences)
+        output += ' '.join(sentences)
     if max_turns > 0:
-        output += '\n\n' + '## Conversation\n' + ' '.join(selected_turns)
+        output += '\n\n ## Conversation\n' + ' '.join(selected_turns)
 
     return output, True
