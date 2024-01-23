@@ -8,3 +8,4 @@ figures/
 16fp_runs/
 trafocache
 tmp
+*.png
