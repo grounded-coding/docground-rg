@@ -30,7 +30,7 @@ from .utils.metrics import (
     BLEU, METEOR, ROUGE,
     print_gpu_utilization
 )
-from .utils.data import write_generation_preds
+from .utils.data import write_generation_preds, write_metrics_to_csv
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -132,7 +132,6 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, ge
     all_ground_truths = accelerator.gather(all_ground_truths)
     result = dict()
 
-    metrics_list = []
     if accelerator.is_main_process:
         # Remove padding and convert back to lists
         logger.info(f"Gathered results from all GPUs. Preparing results for decoding.")
@@ -156,23 +155,9 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, ge
             with open(output_eval_file, "a") as writer:
                 logger.info("***** Eval results %s *****" % desc)
                 writer.write("***** Eval results %s *****\n" % desc)
-                for sampled_text, ground_truth_text in zip(all_sampled_texts, all_ground_truths_text):
-                    sample_metrics = {}
-                    for metric_class in [BLEU]:
-                        metric = metric_class()
-                        metric.update((sampled_text[0], ground_truth_text))
 
-                        name = metric.name()
-                        score = metric.compute()
-
-                        if metric.is_single:
-                            sample_metrics[name] = score
-                        else:
-                            for _name, _score in zip(name, score):
-                                sample_metrics[_name] = _score
-
-                    # Append the metrics for this sample to the DataFrame
-                    metrics_list.append(sample_metrics)
+                csv_metrics = [BLEU]
+                write_metrics_to_csv(all_sampled_texts, all_ground_truths_text, csv_metrics, eval_output_dir)
 
                 for metric in metrics:
                     for sampled_text, ground_truth_text in zip(all_sampled_texts, all_ground_truths_text):
@@ -188,9 +173,7 @@ def evaluate(args, eval_dataset, model, tokenizer, desc="", accelerator=None, ge
                             result[_name] = _score
                             logger.info("  %s = %s", _name, str(_score))
                             writer.write("%s = %s\n" % (_name, str(_score)))
-        metrics_df = pd.DataFrame(metrics_list)
-        logger.info(f"Writing evaluation metrics to {eval_output_dir}/eval_metrics.csv")
-        metrics_df.to_csv(os.path.join(eval_output_dir, "eval_metrics.csv"), index=False)
+
     return result
 
 

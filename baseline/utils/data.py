@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import pandas as pd
 from accelerate.logging import get_logger
 
 logger = get_logger(__name__, log_level="INFO")
@@ -51,6 +52,30 @@ def write_detection_preds(dataset_walker, output_file, data_infos, pred_ids):
     with open(output_file, "w") as jsonfile:
         logger.info("Writing predictions to {}".format(output_file))
         json.dump(labels, jsonfile, indent=2)
+
+
+def write_metrics_to_csv(all_sampled_texts, all_ground_truths_text, csv_metrics, eval_output_dir):
+    metrics_list = []
+    # Prepare all metrics in csv_metrics to be written individually to the csv file
+    for sampled_text, ground_truth_text in zip(all_sampled_texts, all_ground_truths_text):
+        sample_metrics = {}
+        for metric_class in csv_metrics:
+            metric = metric_class()
+            metric.update((sampled_text[0], ground_truth_text))
+
+            name = metric.name()
+            score = metric.compute()
+
+            if metric.is_single:
+                sample_metrics[name] = score
+            else:
+                for _name, _score in zip(name, score):
+                    sample_metrics[_name] = _score
+        metrics_list.append(sample_metrics)
+
+    metrics_df = pd.DataFrame(metrics_list)
+    logger.info(f"Writing evaluation metrics to {eval_output_dir}/eval_metrics.csv")
+    metrics_df.to_csv(os.path.join(eval_output_dir, "eval_metrics.csv"), index=False)
 
 
 def write_selection_preds(dataset_walker, output_file, data_infos, sorted_pred_ids, topk=None, all_preds=None):
