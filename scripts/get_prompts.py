@@ -3,7 +3,7 @@ from itertools import groupby
 from operator import itemgetter
 
 def truncate_output(knowledge_text, conversation_text, max_tokens=1024, char_per_token=4):
-    entire_input_len = max_tokens * char_per_token
+    entire_input_len = max_tokens * char_per_token if max_tokens else 1024 * 4
 
     # Calculate the length of knowledge text and conversation text
     entire_knowledge_len = len(knowledge_text)

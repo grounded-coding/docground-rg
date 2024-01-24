@@ -1,4 +1,4 @@
-from scripts.data_scripts.get_prompts import get_prompt
+from scripts.get_prompts import get_prompt
 import json
 
 split = "val"
