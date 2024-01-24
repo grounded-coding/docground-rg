@@ -33,5 +33,5 @@ while True:
             continue
         else:
             raise ValueError("Unknown input.")
-    print(get_prompt(id, split=split, dataset="data", label_print=label_print, max_turns=15, max_n_sent=15)[0])
+    print(get_prompt(id, split=split, dataset="data", label_print=label_print, max_input_tokens=1024)[0])
     
