@@ -88,7 +88,7 @@ if command -v sbatch &>/dev/null; then
 #SBATCH --time=168:00:00
 #SBATCH -p ${partition}
 #SBATCH --mem=${cpu_mem}G
-#SBATCH --chdir=/home/nhilgers/setups/dstc11-track5
+#SBATCH --chdir=$HOME/setups/dstc11-track5
 
 ${train_command}
 EOF
@@ -104,7 +104,7 @@ EOF
 #SBATCH --time=168:00:00
 #SBATCH -p ${partition}
 #SBATCH --mem=${cpu_mem}G
-#SBATCH --chdir=/home/nhilgers/setups/dstc11-track5
+#SBATCH --chdir=$HOME/setups/dstc11-track5
 
 ${eval_command}
 EOF
