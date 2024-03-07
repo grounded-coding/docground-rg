@@ -59,18 +59,18 @@ def prompt_openai(context, model, client):
 
 def process_request(dataset, i, model, client):
     context, target = get_prompt(i, False, dataset=dataset.dataset, split=dataset.dataset_split,
-                                 max_input_tokens=1024)
+                                 max_input_tokens=1024, labels=None)
     if not target:
         return {"target": False, "id": i}
 
-    print(f"Sending request {i} with content\n\n {sys_part} \n " + context + task_part + "\n\n------------------")
+    # print(f"Sending request {i} with content\n\n {sys_part} \n " + context + task_part + "\n\n------------------")
 
     response = prompt_openai(context, model, client)
     return {"target": target, "response": response.replace("Assistant: ", ""), "id": i}
 
 
 if __name__ == "__main__":
-    dataset = InputData("data", "val")
+    dataset = InputData("data", "test")
     model = "gpt-3.5-turbo-0613"
     load_dotenv()
     client = OpenAI(

@@ -35,12 +35,14 @@ def truncate_output(knowledge_text, conversation_text, max_tokens=1024, char_per
     return truncated_output
 
 
-def get_prompt(id, label_print=False, split="val", max_turns=10000, max_n_sent=10000, dataset="data", max_input_tokens=None):
+def get_prompt(id, label_print=False, split="val", max_turns=10000, max_n_sent=10000, dataset="data", max_input_tokens=None, labels=None):
 
     with open(f'{dataset}/{split}/knowledge.json', encoding="utf-8") as f:
         knowledge = json.load(f)
 
-    with open(f'{dataset}/{split}/labels.json', encoding="utf-8") as f:
+    if not labels:
+        labels = f'{dataset}/{split}/labels.json'
+    with open(labels, encoding="utf-8") as f:
         labels = json.load(f)
 
     with open(f'{dataset}/{split}/logs.json', encoding="utf-8") as f:
