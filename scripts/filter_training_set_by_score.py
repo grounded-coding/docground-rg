@@ -29,7 +29,7 @@ def main(data_file_path_1, data_file_path_2, ratings_file_path):
     return filtered_data_1, filtered_data_2
 
 # Example usage
-filtered_data_1, filtered_data_2 = main('data/train/labels.json', 'data/train/logs.json', '/u/nils.hilgers/setups/docground_eval/outputs/dstc11/train/humanref/geval4_turbo.json')
+filtered_data_1, filtered_data_2 = main('data/train/labels.json', 'data/train/logs.json', '/u/nils.hilgers/setups/docground_eval/outputs/dstc11/train/humanref/GPT4Eval.json')
 
 # Optionally, you can write the filtered data back to new JSON files
 with open('data/train_filtered/labels.json', 'w') as file:
